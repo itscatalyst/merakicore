@@ -10,13 +10,13 @@
   "core_gate": "G0",
   "studio_gate": null,
   "contract_state": "experimental",
-  "active_packets": ["G0-C2", "G0-C3", "G0-C4", "G0-C5", "G0-C7"],
+  "active_packets": ["G0-C4R1", "G0-C7R1"],
   "blocked_packets": [],
-  "accepted_packets": ["G0-C0", "G0-C1", "G0-C6"],
-  "open_decisions": [],
-  "gate_evidence": [],
+  "accepted_packets": ["G0-C0", "G0-C1", "G0-C2", "G0-C3", "G0-C4", "G0-C5", "G0-C6", "G0-C7"],
+  "open_decisions": ["Provision a real PostgreSQL 16 plus pgvector runtime for local Gate 0 migration, RLS, and concurrency proof."],
+  "gate_evidence": ["ops/proof/G0-manifest.yaml", "review:G0:REVISE:g0_independent_reviewer"],
   "behavior_change_proofs": [],
-  "regressions": [],
-  "next_merge_order": ["G0-C2", "G0-C3", "G0-C4", "G0-C5", "G0-C7"],
-  "last_transition": "2026-07-13T00:00:00+05:30"
+  "regressions": ["Proof validation must target the actual gate manifest, not only its template.", "Database gate names must be backed by live PostgreSQL behavior, not static SQL assertions."],
+  "next_merge_order": ["G0-C4R1", "G0-C7R1", "G0-independent-rereview"],
+  "last_transition": "2026-07-13T16:45:00+05:30"
 }

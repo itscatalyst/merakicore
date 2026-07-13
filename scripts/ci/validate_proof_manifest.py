@@ -20,7 +20,7 @@ except ImportError as error:  # pragma: no cover
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SCHEMA = ROOT / "ops/proof/proof-manifest.schema.json"
-DEFAULT_MANIFEST = ROOT / "ops/proof/proof-manifest.template.yaml"
+PROOF_DIR = ROOT / "ops/proof"
 
 
 def load_document(path: Path) -> object:
@@ -30,7 +30,7 @@ def load_document(path: Path) -> object:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("manifests", nargs="*", type=Path, default=[DEFAULT_MANIFEST])
+    parser.add_argument("manifests", nargs="*", type=Path)
     parser.add_argument("--schema", type=Path, default=DEFAULT_SCHEMA)
     args = parser.parse_args()
     try:
@@ -40,9 +40,14 @@ def main() -> int:
         print(f"ERROR: invalid proof schema {args.schema}: {error}", file=sys.stderr)
         return 2
 
+    manifest_paths = args.manifests or sorted(PROOF_DIR.glob("*-manifest.yaml"))
+    if not manifest_paths:
+        print(f"ERROR: no gate proof manifests found in {PROOF_DIR}", file=sys.stderr)
+        return 2
+
     validator = Draft202012Validator(schema, format_checker=FormatChecker())
     failed = False
-    for manifest_path in args.manifests:
+    for manifest_path in manifest_paths:
         try:
             manifest = load_document(manifest_path)
         except (OSError, UnicodeError, json.JSONDecodeError, yaml.YAMLError) as error:

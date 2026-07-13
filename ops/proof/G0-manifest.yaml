@@ -2,7 +2,7 @@ schema_version: 1
 goal_id: meraki-core-studio-foundation
 native_goal_thread_id: 019f5a7d-d0ce-7170-9dc3-6e4aacfe3b02
 gate_id: G0
-gate_status: ready_for_review
+gate_status: revised
 generated_at: '2026-07-13T16:30:00+05:30'
 commit: null
 packets:
@@ -26,7 +26,7 @@ artifacts:
   - { path: schemas/meraki.schema.json, sha256: 87f76796ee2315db654bec983fc5de87091561895b1f9ce5f1f04dcba0440bca, description: Canonical public JSON Schema contracts }
   - { path: packages/contracts/src/generated.ts, sha256: 15cc3b9e068f72b68f9ad369eab11411ed449bfe36ccd9999f274f88a125c3bf, description: Schema-derived TypeScript wire types }
   - { path: migrations/0001_foundation.up.sql, sha256: 9d826dd031ba275a59980a3e2c228c8a769a727e76a6016b20ea0e05edbe53cc, description: PostgreSQL tenant RLS audit idempotency foundation }
-  - { path: .github/workflows/gate-0.yml, sha256: b03e4456ae4fbdc40a531a8455bd6018f5a4577cb9c29d25bcd3c18fb2516122, description: Gate 0 PostgreSQL-backed CI workflow }
+  - { path: .github/workflows/gate-0.yml, sha256: 9000c8677703df5f92eeac082bd3220b596994b597ece46912affb0c460fc7f2, description: Gate 0 PostgreSQL-backed CI workflow }
 goal_evidence:
   - { condition: canonical_goal_and_execution_control, status: proven, evidence: [GOAL.md, config/execution_graph.yaml] }
   - { condition: installable_core_and_studio, status: partial, evidence: [package.json, infra/docker-compose.yml] }
@@ -40,5 +40,5 @@ known_limitations:
 review:
   independent: true
   reviewer_context_id: g0_independent_reviewer
-  verdict: PENDING
-  verdict_artifact: null
+  verdict: REVISE
+  verdict_artifact: ops/proof/G0-review-1.yaml

@@ -57,7 +57,7 @@ jobs:
       - name: Validate execution graph and proof schema
         run: |
           pnpm orchestration:validate
-          pnpm proof:validate
+          pnpm proof:validate -- ops/proof/G0-manifest.yaml
       - name: Typecheck, lint, and unit test
         run: |
           pnpm typecheck
@@ -67,5 +67,27 @@ jobs:
         run: pnpm contracts:check
       - name: Test migrations up, down, and up
         run: pnpm db:test-migrations
+      - name: Run live database gate and capture evidence
+        run: >-
+          python scripts/ci/capture_command_evidence.py record
+          --name g0-live-db
+          --manifest ops/proof/G0-manifest.yaml
+          --replace-reference
+          -- corepack pnpm db:test-live
       - name: Test tenant and subject isolation
         run: pnpm security:test-isolation
+      - name: Validate and verify final Gate 0 proof manifest
+        run: |
+          pnpm proof:validate -- ops/proof/G0-manifest.yaml
+          pnpm proof:verify
+      - name: Upload Gate 0 proof evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-0-proof-${{ github.run_id }}
+          path: |
+            ops/proof/G0-manifest.yaml
+            ops/proof/evidence/
+          if-no-files-found: error
+      - name: Test live migrations, idempotency, and RLS isolation
+        run: pnpm db:test-live

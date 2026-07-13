@@ -6,6 +6,10 @@ import reactHooks from "eslint-plugin-react-hooks";
 export default tseslint.config(
   { ignores: ["**/dist/**", "**/coverage/**", "planning/**"] },
   eslint.configs.recommended,
+  {
+    files: ["scripts/**/*.mjs"],
+    languageOptions: { globals: globals.node }
+  },
   ...tseslint.configs.recommendedTypeChecked.map((config) => ({
     ...config,
     files: ["**/*.ts", "**/*.tsx"],
