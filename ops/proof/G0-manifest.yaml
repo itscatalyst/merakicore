@@ -1,0 +1,44 @@
+schema_version: 1
+goal_id: meraki-core-studio-foundation
+native_goal_thread_id: 019f5a7d-d0ce-7170-9dc3-6e4aacfe3b02
+gate_id: G0
+gate_status: ready_for_review
+generated_at: '2026-07-13T16:30:00+05:30'
+commit: null
+packets:
+  - { id: G0-C0, status: accepted, evidence: [] }
+  - { id: G0-C1, status: accepted, evidence: [] }
+  - { id: G0-C2, status: accepted, evidence: [] }
+  - { id: G0-C3, status: accepted, evidence: [] }
+  - { id: G0-C4, status: accepted, evidence: [] }
+  - { id: G0-C5, status: accepted, evidence: [] }
+  - { id: G0-C6, status: accepted, evidence: [] }
+  - { id: G0-C7, status: accepted, evidence: [] }
+commands:
+  - { command: corepack pnpm orchestration:validate, exit_code: 0, passed: true }
+  - { command: corepack pnpm proof:validate, exit_code: 0, passed: true }
+  - { command: corepack pnpm contracts:check, exit_code: 0, passed: true }
+  - { command: corepack pnpm typecheck, exit_code: 0, passed: true }
+  - { command: corepack pnpm lint, exit_code: 0, passed: true }
+  - { command: corepack pnpm exec vitest run --passWithNoTests --pool=threads --maxWorkers=1, exit_code: 0, passed: true }
+artifacts:
+  - { path: config/execution_graph.yaml, sha256: 39178afbea8da0f0c5ca8d8f079385cf103fdad7db612ba5ada7fced9d05bbf4, description: Canonical accepted-gate execution DAG }
+  - { path: schemas/meraki.schema.json, sha256: 87f76796ee2315db654bec983fc5de87091561895b1f9ce5f1f04dcba0440bca, description: Canonical public JSON Schema contracts }
+  - { path: packages/contracts/src/generated.ts, sha256: 15cc3b9e068f72b68f9ad369eab11411ed449bfe36ccd9999f274f88a125c3bf, description: Schema-derived TypeScript wire types }
+  - { path: migrations/0001_foundation.up.sql, sha256: 9d826dd031ba275a59980a3e2c228c8a769a727e76a6016b20ea0e05edbe53cc, description: PostgreSQL tenant RLS audit idempotency foundation }
+  - { path: .github/workflows/gate-0.yml, sha256: b03e4456ae4fbdc40a531a8455bd6018f5a4577cb9c29d25bcd3c18fb2516122, description: Gate 0 PostgreSQL-backed CI workflow }
+goal_evidence:
+  - { condition: canonical_goal_and_execution_control, status: proven, evidence: [GOAL.md, config/execution_graph.yaml] }
+  - { condition: installable_core_and_studio, status: partial, evidence: [package.json, infra/docker-compose.yml] }
+  - { condition: behavior_change_and_causal_proof, status: not_started, evidence: [] }
+regressions_added:
+  - Generated contracts must use object-safe types rather than empty-object types.
+  - Aborted provider calls must reject with Error instances.
+  - The pinned pnpm version must be invoked through Corepack in workspace scripts.
+known_limitations:
+  - Docker and native PostgreSQL are unavailable on this host, so migration up/down/up, live RLS denial, and concurrent idempotency are not yet locally proven.
+review:
+  independent: true
+  reviewer_context_id: g0_independent_reviewer
+  verdict: PENDING
+  verdict_artifact: null

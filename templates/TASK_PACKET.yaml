@@ -1,0 +1,34 @@
+schema_version: 1
+id: G0-C0
+objective: ''
+gate: G0
+owner_role: ''
+depends_on: []
+allowed_files: []
+forbidden_files:
+- files outside allowed_files
+inputs: []
+outputs: []
+invariants: []
+acceptance_commands: []
+fixtures: []
+known_risks: []
+stop_conditions:
+- contract conflict
+- required file outside allowlist
+- scope expansion
+- security invariant cannot be preserved
+- model output would be treated as user evidence
+goal_id: meraki-core-studio-foundation
+native_goal_thread_id: 019f5a7d-d0ce-7170-9dc3-6e4aacfe3b02
+goal_relevance: ''
+completion_evidence: []
+proof_manifest: ''
+fresh_context:
+  required: true
+  prior_context_reused: false
+handoff:
+  summary: ''
+  files_changed: []
+  commands_run: []
+  unresolved: []

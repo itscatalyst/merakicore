@@ -1,0 +1,54 @@
+openapi: 3.1.0
+info: { title: Meraki Core and Studio API, version: 0.1.0 }
+security: [{ bearerAuth: [] }, { studioSession: [] }]
+paths:
+  /health: { get: { security: [], responses: { '200': { description: Health and contract versions } } } }
+  /v1/ingest: { post: { responses: { '202': { description: Idempotent ingest receipt } } } }
+  /v1/learn: { post: { responses: { '202': { description: Learning job receipt } } } }
+  /v1/guide: { post: { responses: { '200': { description: Deterministic MerakiPack } } } }
+  /v1/runs: { get: { responses: { '200': { description: Cursor-paginated runs } } } }
+  /v1/runs/start: { post: { responses: { '201': { description: Run started } } } }
+  /v1/runs/{id}/finish:
+    post:
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: Run finished } }
+  /v1/feedback: { post: { responses: { '201': { description: Feedback recorded } } } }
+  /v1/outcomes: { post: { responses: { '201': { description: Outcome recorded } } } }
+  /v1/evaluate: { post: { responses: { '202': { description: Evaluation job receipt } } } }
+  /v1/profile/atoms: { get: { responses: { '200': { description: Cursor-paginated atom versions } } } }
+  /v1/profile/atoms/{id}/commands:
+    post:
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: Versioned confirm edit rescope limit or revoke command }, '409': { description: Version conflict } }
+  /v1/update-proposals: { get: { responses: { '200': { description: Paginated proposals } } } }
+  /v1/update-proposals/{id}/commands:
+    post:
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: Approve reject or rollback proposal } }
+  /v1/agents: { get: { responses: { '200': { description: Paginated agents } } } }
+  /v1/agents/{id}/commands:
+    post:
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: Versioned pause restrict or disconnect command } }
+  /v1/studio/overview: { get: { responses: { '200': { description: Studio overview read model } } } }
+  /v1/studio/stream: { get: { responses: { '200': { description: Authenticated replayable SSE notifications } } } }
+  /v1/graph: { get: { responses: { '200': { description: Cursor-paginated focused graph projection } } } }
+  /v1/runs/{id}/trace:
+    get:
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: Paginated run lineage trace } }
+  /v1/experiments: { get: { responses: { '200': { description: Paginated experiments } } }, post: { responses: { '201': { description: Frozen experiment } } } }
+  /v1/goals: { get: { responses: { '200': { description: User goals } } }, post: { responses: { '201': { description: Versioned user goal } } } }
+  /v1/sources/{id}/deletion-preview:
+    get:
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: Dependent data impact } }
+  /v1/sources/{id}:
+    delete:
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses: { '202': { description: Confirmed deletion job } }
+  /v1/export: { post: { responses: { '202': { description: Audited export job } } } }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+    studioSession: { type: apiKey, in: cookie, name: meraki_session }

@@ -1,0 +1,8 @@
+{
+  "name": "@meraki/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "tsc -b", "typecheck": "tsc -b --pretty false" },
+  "dependencies": { "fastify": "^5.6.0" }
+}

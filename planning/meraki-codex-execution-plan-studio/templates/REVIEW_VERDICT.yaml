@@ -1,0 +1,10 @@
+verdict: REVISE
+contract_drift: []
+correctness_failures: []
+missing_tests: []
+security_failures: []
+causal_proof_failures: []
+performance_risks: []
+required_changes: []
+optional_changes: []
+evidence_reviewed: []

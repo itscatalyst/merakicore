@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "goal": {
+    "canonical_id": "meraki-core-studio-foundation",
+    "native_thread_id": "019f5a7d-d0ce-7170-9dc3-6e4aacfe3b02",
+    "canonical_file": "GOAL.md",
+    "status": "active",
+    "completion_evidence": []
+  },
+  "core_gate": "G0",
+  "studio_gate": null,
+  "contract_state": "experimental",
+  "active_packets": ["G0-C2", "G0-C3", "G0-C4", "G0-C5", "G0-C7"],
+  "blocked_packets": [],
+  "accepted_packets": ["G0-C0", "G0-C1", "G0-C6"],
+  "open_decisions": [],
+  "gate_evidence": [],
+  "behavior_change_proofs": [],
+  "regressions": [],
+  "next_merge_order": ["G0-C2", "G0-C3", "G0-C4", "G0-C5", "G0-C7"],
+  "last_transition": "2026-07-13T00:00:00+05:30"
+}

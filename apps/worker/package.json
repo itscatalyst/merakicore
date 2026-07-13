@@ -1,0 +1,8 @@
+{
+  "name": "@meraki/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "tsc -b", "typecheck": "tsc -b --pretty false" },
+  "dependencies": { "pg-boss": "^12.9.0" }
+}

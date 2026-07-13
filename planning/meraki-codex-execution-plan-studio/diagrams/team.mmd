@@ -1,0 +1,16 @@
+flowchart LR
+    O[Codex Root] --> A[Architect]
+    O --> W1[Evidence Workers]
+    O --> W2[Profile Workers]
+    O --> W3[Guidance Workers]
+    O --> W4[Evaluation Workers]
+    O --> W5[Runtime/Security]
+    A --> I[Integrator]
+    W1 --> I
+    W2 --> I
+    W3 --> I
+    W4 --> I
+    W5 --> I
+    I --> R[Independent Reviewer]
+    R -->|Accept| M[Main]
+    R -->|Revise| O

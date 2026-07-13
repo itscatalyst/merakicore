@@ -1,0 +1,24 @@
+version: 1
+id: meraki-core-studio-foundation
+canonical_file: GOAL.md
+title: Build installable Meraki Core and Studio
+success_conditions:
+  - correction_becomes_immutable_evidence
+  - narrow_defensible_lesson
+  - studio_evidence_scope_mode_confidence_lifecycle
+  - relevant_agent_behavior_change
+  - blind_or_objective_improvement
+  - targeted_ablation_attribution
+  - governed_edit_limit_revoke
+  - related_run_improves
+  - unrelated_run_invariant
+  - complete_source_lineage
+  - restart_and_clean_install
+forbidden_shortcuts:
+  - static_profile_prompt_as_completion
+  - graph_without_live_engine
+  - model_output_as_user_evidence
+  - unscoped_personality_inference
+  - causal_claim_without_controls
+  - studio_direct_database_mutation
+  - silent_profile_rewrite

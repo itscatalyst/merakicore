@@ -1,0 +1,25 @@
+version: 1
+id: meraki-core-studio-foundation
+title: Build Meraki Core and Studio
+statement: Build an evidence-backed, inspectable and evaluated learning layer that
+  makes connected agents adapt to the user across repeated work, plus an IDE-like
+  Studio for observing and controlling the loop.
+canonical_file: GOAL.md
+success_conditions:
+- correction_to_changed_future_behavior
+- complete_evidence_lineage
+- task_and_mode_scoping
+- baseline_raw_memory_meraki_ablation_evals
+- studio_profile_graph_and_inspector
+- connected_agent_live_visibility
+- user_governed_profile_updates
+- unrelated_task_invariance
+- restart_and_clean_install
+forbidden_shortcuts:
+- static_profile_prompt_as_completion
+- graph_visualization_without_live_engine
+- model_output_as_user_evidence
+- unscoped_global_personality_inference
+- guided_output_without_causal_controls
+- ui_direct_database_mutation
+- silent_profile_rewrite

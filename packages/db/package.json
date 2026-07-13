@@ -1,0 +1,10 @@
+{
+  "name": "@meraki/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "scripts": { "build": "tsc -b", "typecheck": "tsc -b --pretty false", "test": "vitest run src/migrations.test.ts" },
+  "dependencies": { "pg": "^8.16.3" },
+  "devDependencies": { "@types/pg": "^8.15.5" }
+}

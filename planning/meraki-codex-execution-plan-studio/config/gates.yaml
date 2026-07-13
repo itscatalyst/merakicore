@@ -1,0 +1,226 @@
+version: 1
+gates:
+- id: G0
+  name: Control plane
+  required_packets:
+  - G0-C1
+  - G0-C2
+  - G0-C3
+  - G0-C4
+  - G0-C5
+  - G0-C6
+  - G0-C7
+  required_commands:
+  - pnpm typecheck
+  - pnpm lint
+  - pnpm test
+  - pnpm contracts:check
+  - pnpm db:test-migrations
+  review_required: true
+- id: G1
+  name: Explicit correction vertical slice
+  required_packets:
+  - G1-E1
+  - G1-L1
+  - G1-P1
+  - G1-R1
+  - G1-V1
+  proof:
+  - related_pack_changes
+  - unrelated_pack_invariant
+  - complete_lineage
+  review_required: true
+- id: G2
+  name: Evidence and extraction
+  required_packets:
+  - G2-E1
+  - G2-E2
+  - G2-X1
+  - G2-X2
+  - G2-X3
+  - G2-X4
+  - G2-T1
+  proof:
+  - golden_precision
+  - failure_atomicity
+  - deduplication
+  - injection_safe
+  review_required: true
+- id: G3
+  name: Profile modes lifecycle
+  required_packets:
+  - G3-P1
+  - G3-P2
+  - G3-P3
+  - G3-M1
+  - G3-T1
+  - G3-Q1
+  proof:
+  - mode_coexistence
+  - scope_safety
+  - rollback
+  - preference_uncertainty
+  review_required: true
+- id: G4
+  name: Guidance
+  required_packets:
+  - G4-R1
+  - G4-R2
+  - G4-R3
+  - G4-R4
+  - G4-R5
+  - G4-R6
+  - G4-T1
+  thresholds:
+    mandatory_recall: 1.0
+    pack_precision: 0.8
+    determinism: 1.0
+    negative_abstention: 0.9
+  review_required: true
+- id: G5
+  name: Runtime
+  required_packets:
+  - G5-A1
+  - G5-A2
+  - G5-A3
+  - G5-L1
+  - G5-F1
+  - G5-O1
+  proof:
+  - restart_persistence
+  - two_session_profile
+  - immutable_pack_manifest
+  review_required: true
+- id: G6
+  name: Evaluation and learning
+  required_packets:
+  - G6-E1
+  - G6-E2
+  - G6-E3
+  - G6-L1
+  - G6-L2
+  proof:
+  - blind_ab
+  - raw_memory_control
+  - targeted_ablation
+  - governed_update
+  review_required: true
+- id: G7
+  name: Dogfood proof
+  required_packets:
+  - G7-D1
+  - G7-D2
+  - G7-D3
+  - G7-D4
+  - G7-D5
+  proof:
+  - full_bundle
+  - heldout_tasks
+  - failures_included
+  - longitudinal_metrics
+  review_required: true
+- id: G8
+  name: Release
+  required_packets:
+  - G8-S1
+  - G8-R1
+  proof:
+  - clean_install
+  - tenant_isolation
+  - deletion
+  - export
+  - known_limitations
+  review_required: true
+- id: S0
+  name: Studio shell and goal
+  requires_core_gate: G0
+  required_packets:
+  - S0-U1
+  - S0-U2
+  - S0-U3
+  - S0-U4
+  - S0-T1
+  proof:
+  - clean_load
+  - goal_visible
+  - health_visible
+  - generated_contracts
+  review_required: true
+- id: S1
+  name: Visible correction loop
+  requires_core_gate: G1
+  required_packets:
+  - S1-U1
+  - S1-U2
+  - S1-U3
+  - S1-U4
+  - S1-T1
+  proof:
+  - source_to_output_lineage
+  - versioned_commands
+  - related_change
+  - unrelated_invariance
+  review_required: true
+- id: S2
+  name: Profile IDE and brain graph
+  requires_core_gate: G3
+  required_packets:
+  - S2-U1
+  - S2-U2
+  - S2-U3
+  - S2-U4
+  - S2-U5
+  - S2-T1
+  proof:
+  - canonical_graph
+  - mode_coexistence
+  - graph_list_equivalence
+  - performance
+  review_required: true
+- id: S3
+  name: Agents and live traces
+  requires_core_gate: G5
+  required_packets:
+  - S3-U1
+  - S3-U2
+  - S3-U3
+  - S3-U4
+  - S3-T1
+  proof:
+  - real_agent_status
+  - authenticated_stream
+  - restart_persistence
+  - permissions
+  review_required: true
+- id: S4
+  name: Evaluation and learning control
+  requires_core_gate: G6
+  required_packets:
+  - S4-U1
+  - S4-U2
+  - S4-U3
+  - S4-U4
+  - S4-U5
+  - S4-T1
+  proof:
+  - blind_review
+  - ablation_visible
+  - proposal_governance
+  - reproducible_experiment
+  review_required: true
+- id: S5
+  name: Goals sources and release
+  requires_core_gate: G8
+  required_packets:
+  - S5-U1
+  - S5-U2
+  - S5-U3
+  - S5-U4
+  - S5-T1
+  proof:
+  - goal_outcomes
+  - deletion_impact
+  - proof_export
+  - accessibility
+  - clean_install
+  review_required: true

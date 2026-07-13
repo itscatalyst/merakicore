@@ -1,0 +1,1 @@
+{"contract":"event","id":"not-a-uuid","tenant_id":"018f47d2-18ab-7fd2-8c78-5d8758212346","subject_id":"018f47d2-18ab-7fd2-8c78-5d8758212347","source_id":"018f47d2-18ab-7fd2-8c78-5d8758212348","event_type":"output.corrected","occurred_at":"yesterday","recorded_at":"2026-07-13T10:30:01Z","payload":{},"evidence_spans":[],"mutable":true}

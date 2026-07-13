@@ -1,0 +1,20 @@
+flowchart TB
+    A[Command Center] --> B[Brain Graph]
+    A --> C[Profile Explorer]
+    A --> D[Agents]
+    A --> E[Runs and Traces]
+    A --> F[Evaluation Lab]
+    A --> G[Learning Queue]
+    A --> H[Goals]
+    A --> I[Sources]
+
+    B --> J[Atom Inspector]
+    C --> J
+    E --> K[Pack + Provenance]
+    F --> L[Experiments + Ablations]
+    G --> M[Versioned Profile Commands]
+
+    M --> N[Meraki Core API]
+    N --> O[Profile / Guidance / Evaluation]
+    O --> P[SSE Event Stream]
+    P --> A

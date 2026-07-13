@@ -1,0 +1,21 @@
+id: G0-C1
+objective: ''
+gate: G0
+owner_role: ''
+depends_on: []
+allowed_files: []
+forbidden_files: []
+inputs: []
+outputs: []
+invariants: []
+acceptance_commands: []
+fixtures: []
+known_risks: []
+stop_conditions:
+- contract conflict
+- required file outside allowlist
+- scope expansion
+- security invariant cannot be preserved
+goal_id: meraki-core-studio-foundation
+goal_relevance: ''
+completion_evidence: []

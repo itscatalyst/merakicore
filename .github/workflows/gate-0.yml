@@ -1,0 +1,71 @@
+name: Gate 0
+
+on:
+  push:
+    branches: [main, "gate/**", "agent/**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gate-0-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: meraki
+          POSTGRES_PASSWORD: meraki
+          POSTGRES_DB: meraki_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U meraki -d meraki_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      CI: "true"
+      DATABASE_URL: postgresql://meraki:meraki@127.0.0.1:5432/meraki_test
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install CI validation libraries
+        run: python -m pip install --disable-pip-version-check PyYAML==6.0.2 jsonschema==4.23.0
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Validate execution graph and proof schema
+        run: |
+          pnpm orchestration:validate
+          pnpm proof:validate
+      - name: Typecheck, lint, and unit test
+        run: |
+          pnpm typecheck
+          pnpm lint
+          pnpm test
+      - name: Check generated contract drift
+        run: pnpm contracts:check
+      - name: Test migrations up, down, and up
+        run: pnpm db:test-migrations
+      - name: Test tenant and subject isolation
+        run: pnpm security:test-isolation
