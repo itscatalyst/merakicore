@@ -44,6 +44,12 @@ importers:
 
   apps/api:
     dependencies:
+      '@meraki/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@meraki/learning':
+        specifier: workspace:*
+        version: link:../../packages/learning
       fastify:
         specifier: ^5.6.0
         version: 5.10.0

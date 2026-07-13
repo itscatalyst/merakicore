@@ -4,5 +4,5 @@
   "private": true,
   "type": "module",
   "scripts": { "build": "tsc -b", "typecheck": "tsc -b --pretty false" },
-  "dependencies": { "fastify": "^5.6.0" }
+  "dependencies": { "@meraki/contracts": "workspace:*", "@meraki/learning": "workspace:*", "fastify": "^5.6.0" }
 }
