@@ -10,6 +10,9 @@
   },
   "scripts": {
     "build": "corepack pnpm -r --if-present build",
+    "install:verify": "corepack pnpm install --frozen-lockfile && corepack pnpm build && corepack pnpm typecheck",
+    "dev:api": "corepack pnpm --filter @meraki/api build && node apps/api/dist/index.js",
+    "build:studio": "corepack pnpm --filter @meraki/studio build",
     "typecheck": "corepack pnpm -r --if-present typecheck",
     "lint": "eslint .",
     "test": "vitest run --passWithNoTests",
