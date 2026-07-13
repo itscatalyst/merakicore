@@ -54,6 +54,9 @@ importers:
 
   apps/studio:
     dependencies:
+      '@meraki/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       react:
         specifier: ^19.1.1
         version: 19.2.7
@@ -91,7 +94,11 @@ importers:
 
   packages/guidance: {}
 
-  packages/learning: {}
+  packages/learning:
+    dependencies:
+      '@meraki/contracts':
+        specifier: workspace:*
+        version: link:../contracts
 
   packages/profile: {}
 
