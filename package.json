@@ -23,6 +23,7 @@
     "orchestration:validate": "python scripts/orchestration/validate_execution_graph.py",
     "proof:validate": "python scripts/ci/validate_proof_manifest.py",
     "proof:verify": "python scripts/ci/capture_command_evidence.py verify --manifest ops/proof/G0-manifest.yaml",
+    "runtime:preflight": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bootstrap/install-wsl-postgres.ps1",
     "ci:static": "corepack pnpm orchestration:validate && corepack pnpm proof:validate && corepack pnpm typecheck && corepack pnpm lint && corepack pnpm test",
     "ci:gate0": "corepack pnpm ci:static && corepack pnpm contracts:check && corepack pnpm db:test-migrations && corepack pnpm security:test-isolation && corepack pnpm db:test-live"
   },
