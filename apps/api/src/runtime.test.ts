@@ -28,6 +28,5 @@ describe("connected agent adapter", () => {
     expect(runResponse.statusCode).toBe(200);
     expect(runResponse.json<{ output: string; trace: { changed: boolean } }>().output).toContain("Meraki guidance applied");
     expect(runResponse.json<{ output: string; trace: { changed: boolean } }>().trace.changed).toBe(true);
-    await server.close();
   });
 });

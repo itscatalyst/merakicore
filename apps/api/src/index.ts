@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from "fastify";
+import { pathToFileURL } from "node:url";
 import type { TaskContext } from "@meraki/contracts";
 import { ConnectedAgentRuntime, scopeFromUnknown } from "./runtime.js";
 
@@ -28,7 +29,8 @@ export const buildServer = (runtime = new ConnectedAgentRuntime()): FastifyInsta
   return server;
 };
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// pathToFileURL keeps the executable entrypoint check correct on Windows and POSIX.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const port = Number(process.env.PORT ?? 3001);
   const server = buildServer();
   await server.listen({ port, host: "0.0.0.0" });
