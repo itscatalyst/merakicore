@@ -104,7 +104,10 @@ export function evaluateControlled(scenario = "formatting-correction"): Evaluati
   const evidence = ledger.appendCorrection({ id: "e-correction-1", task: "formatting", mode: "editorial", statement: "Use concise bullets for this task.", createdAt: "2026-01-01T00:00:00.000Z" });
   const proposed = ledger.proposeLesson({ id: "l-bullets-1", evidenceId: evidence.id, task: "formatting", mode: "editorial", guidance: "Use bullets", scope: "task", confidence: 0.98 });
   ledger.governLesson(proposed.id, "approved");
-  const related: RunInput = { task: "formatting", mode: "editorial", prompt: "Answer with bullets" };
+  // The related prompt intentionally omits the desired format so the measured
+  // improvement comes from Meraki retrieval, not from a cue already present in
+  // the task input.
+  const related: RunInput = { task: "formatting", mode: "editorial", prompt: "Answer clearly" };
   const unrelated: RunInput = { task: "unrelated", mode: "research", prompt: "Answer directly" };
   const lesson = ledger.relevant(related.task, related.mode);
   const ablation = Object.fromEntries(((["baseline", "full", "no-evidence", "no-retrieval", "no-learning"] as Variant[]).map((v) => [v, run(related, v, v === "no-evidence" || v === "no-retrieval" || v === "no-learning" ? null : lesson)]))) as Record<Variant, RunOutput>;
