@@ -47,6 +47,9 @@ importers:
       '@meraki/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@meraki/evidence':
+        specifier: workspace:*
+        version: link:../../packages/evidence
       '@meraki/learning':
         specifier: workspace:*
         version: link:../../packages/learning
@@ -56,7 +59,17 @@ importers:
 
   apps/cli: {}
 
-  apps/mcp: {}
+  apps/mcp:
+    dependencies:
+      '@meraki/api':
+        specifier: workspace:*
+        version: link:../api
+      '@meraki/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@meraki/evidence':
+        specifier: workspace:*
+        version: link:../../packages/evidence
 
   apps/studio:
     dependencies:
@@ -96,17 +109,38 @@ importers:
 
   packages/evaluation: {}
 
-  packages/evidence: {}
+  packages/evidence:
+    dependencies:
+      '@meraki/contracts':
+        specifier: workspace:*
+        version: link:../contracts
 
-  packages/guidance: {}
+  packages/guidance:
+    dependencies:
+      '@meraki/contracts':
+        specifier: workspace:*
+        version: link:../contracts
 
   packages/learning:
     dependencies:
       '@meraki/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@meraki/evidence':
+        specifier: workspace:*
+        version: link:../evidence
+      '@meraki/guidance':
+        specifier: workspace:*
+        version: link:../guidance
+      '@meraki/profile':
+        specifier: workspace:*
+        version: link:../profile
 
-  packages/profile: {}
+  packages/profile:
+    dependencies:
+      '@meraki/contracts':
+        specifier: workspace:*
+        version: link:../contracts
 
   packages/providers: {}
 

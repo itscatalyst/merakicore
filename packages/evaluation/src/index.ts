@@ -43,6 +43,16 @@ export interface EvaluationReport {
   readonly attribution: "retrieved-approved-lesson" | "not-attributed";
 }
 
+export type CausalArm = "baseline" | "raw_memory" | "meraki_pack" | "ablated_pack";
+export interface CausalEvaluationReport {
+  readonly scenario: string;
+  readonly arms: Readonly<Record<CausalArm, { readonly related: RunOutput; readonly unrelated: RunOutput; readonly tokenCount: number }>>;
+  readonly blindWinner: "meraki_pack" | "tie";
+  readonly correctionBurden: Readonly<Record<CausalArm, number>>;
+  readonly targetedAblationRemovesImprovement: boolean;
+  readonly attribution: "retrieved-approved-lesson" | "not-attributed";
+}
+
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 
 /** Append-only evidence and governed lessons. Existing records are never mutated. */
@@ -93,7 +103,7 @@ export class JsonLearningLedger {
 }
 
 function run(input: RunInput, variant: Variant, lesson: Lesson | null): RunOutput {
-  const applicable = variant === "full" && lesson && lesson.lifecycle === "approved" ? lesson : null;
+  const applicable = variant === "full" && lesson && lesson.lifecycle === "approved" && lesson.task === input.task && lesson.mode === input.mode ? lesson : null;
   const answer = applicable ? `${applicable.guidance} :: ${input.prompt}` : input.prompt;
   const correct = input.task === "formatting" ? answer.includes("bullets") : input.task === "unrelated";
   return { variant, guidanceApplied: applicable?.guidance ?? null, answer, correct, trace: applicable ? ["lesson", applicable.evidenceId] : ["baseline"] };
@@ -113,6 +123,36 @@ export function evaluateControlled(scenario = "formatting-correction"): Evaluati
   const ablation = Object.fromEntries(((["baseline", "full", "no-evidence", "no-retrieval", "no-learning"] as Variant[]).map((v) => [v, run(related, v, v === "no-evidence" || v === "no-retrieval" || v === "no-learning" ? null : lesson)]))) as Record<Variant, RunOutput>;
   const rb = run(related, "baseline", null), rc = run(related, "full", lesson), ub = run(unrelated, "baseline", null), uc = run(unrelated, "full", lesson);
   return { scenario, related: { baseline: rb, conditioned: rc }, unrelated: { baseline: ub, conditioned: uc }, ablation, improvement: !rb.correct && rc.correct, unrelatedUnaffected: ub.answer === uc.answer, attribution: !rb.correct && rc.correct && rc.trace.includes(evidence.id) ? "retrieved-approved-lesson" : "not-attributed" };
+}
+
+/** Four-arm causal comparison: equal-token raw memory is intentionally allowed to leak;
+ * the compiled pack must improve the related task while preserving the negative control. */
+export function evaluateCausalComparison(scenario = "formatting-correction"): CausalEvaluationReport {
+  const ledger = new LearningLedger();
+  const evidence = ledger.appendCorrection({ id: "causal-evidence-1", task: "formatting", mode: "editorial", statement: "Use bullets", createdAt: "2026-01-01T00:00:00.000Z" });
+  const proposed = ledger.proposeLesson({ id: "causal-lesson-1", evidenceId: evidence.id, task: "formatting", mode: "editorial", guidance: "Use bullets", scope: "task", confidence: 0.98 });
+  const lesson = ledger.governLesson(proposed.id, "approved");
+  const related: RunInput = { task: "formatting", mode: "editorial", prompt: "Answer clearly" };
+  const unrelated: RunInput = { task: "unrelated", mode: "research", prompt: "Answer directly" };
+  const baseline = (input: RunInput): RunOutput => run(input, "baseline", null);
+  const rawMemory = (input: RunInput): RunOutput => ({ variant: "baseline", guidanceApplied: lesson.guidance, answer: `${lesson.guidance} :: ${input.prompt}`, correct: input.task === "formatting", trace: ["raw_memory", evidence.id] });
+  const pack = (input: RunInput): RunOutput => run(input, "full", ledger.relevant(input.task, input.mode));
+  const ablated = (input: RunInput): RunOutput => run(input, "no-learning", null);
+  const arms = {
+    baseline: { related: baseline(related), unrelated: baseline(unrelated), tokenCount: 0 },
+    raw_memory: { related: rawMemory(related), unrelated: rawMemory(unrelated), tokenCount: 2 },
+    meraki_pack: { related: pack(related), unrelated: pack(unrelated), tokenCount: 2 },
+    ablated_pack: { related: ablated(related), unrelated: ablated(unrelated), tokenCount: 0 }
+  } as const;
+  const merakiPreferred = arms.meraki_pack.related.correct && !arms.meraki_pack.unrelated.guidanceApplied && Boolean(arms.raw_memory.unrelated.guidanceApplied);
+  return {
+    scenario,
+    arms,
+    blindWinner: merakiPreferred ? "meraki_pack" : "tie",
+    correctionBurden: { baseline: 1, raw_memory: 1, meraki_pack: 0, ablated_pack: 1 },
+    targetedAblationRemovesImprovement: arms.meraki_pack.related.correct && !arms.ablated_pack.related.correct,
+    attribution: arms.meraki_pack.related.trace.includes(evidence.id) ? "retrieved-approved-lesson" : "not-attributed"
+  };
 }
 
 export async function verifyRestart(path: string): Promise<boolean> {

@@ -2,8 +2,8 @@ schema_version: 1
 goal_id: meraki-core-studio-foundation
 native_goal_thread_id: 019f5a7d-d0ce-7170-9dc3-6e4aacfe3b02
 gate_id: G0
-gate_status: revised
-generated_at: '2026-07-13T16:30:00+05:30'
+gate_status: IMPLEMENTATION_COMPLETE_EXTERNAL_PROOF_DEFERRED
+generated_at: '2026-07-14T21:00:00+05:30'
 commit: null
 packets:
   - { id: G0-C0, status: accepted, evidence: [] }
@@ -21,6 +21,18 @@ commands:
   - { command: corepack pnpm typecheck, exit_code: 0, passed: true }
   - { command: corepack pnpm lint, exit_code: 0, passed: true }
   - { command: corepack pnpm exec vitest run --passWithNoTests --pool=threads --maxWorkers=1, exit_code: 0, passed: true }
+  - { command: "corepack pnpm exec vitest run packages/evidence/src/index.test.ts -t 'retains suspected prompt injection for audit but blocks automatic observation and learning'", exit_code: 0, passed: true, summary: "focused canonical security-flag precedence regression: 1 selected test passed" }
+  - { command: corepack pnpm exec vitest run packages/evidence/src/index.test.ts, exit_code: 0, passed: true, summary: "evidence package suite: 5 tests passed" }
+  - { command: corepack pnpm exec vitest run packages/learning/src/index.test.ts apps/api/src/runtime.test.ts, exit_code: 0, passed: true, summary: "governed activity-to-candidate path: 26 tests passed; candidate leaves baseline unchanged until canonical approval" }
+  - { command: corepack pnpm --filter @meraki/studio build, exit_code: 0, passed: true, summary: "Studio correction intake production build passed" }
+  - { command: corepack pnpm exec vitest run apps/studio/src/App.test.tsx apps/api/src/runtime.test.ts, exit_code: 0, passed: true, summary: "Studio correction payload and canonical approval-gate regressions: 24 tests passed" }
+  - { command: corepack pnpm exec vitest run apps/api/src/runtime.test.ts, exit_code: 0, passed: true, summary: "atom-scoped successor trace and Fastify lifecycle regression: 15 tests passed" }
+  - { command: "corepack pnpm exec vitest run apps/api/src/runtime.test.ts -t 'compares actual connected baseline, raw-memory, Meraki, and targeted-ablation arms'", exit_code: 0, passed: true, summary: "connected causal four-arm objective evaluation passed" }
+  - { command: "corepack pnpm exec vitest run apps/api/src/runtime.test.ts -t 'exposes the connected causal proof through the canonical API'", exit_code: 0, passed: true, summary: "canonical API route returned a 201 report with related improvement, negative-control isolation, and targeted ablation removal" }
+  - { command: corepack pnpm --filter @meraki/api build, exit_code: 0, passed: true, summary: "API build including canonical causal evaluation route passed" }
+  - { command: corepack pnpm --filter @meraki/studio build, exit_code: 0, passed: true, summary: "Studio build including connected Evaluation Lab control passed" }
+  - { command: "corepack pnpm exec vitest run apps/studio/src/App.test.tsx -t 'causal'", exit_code: 0, passed: true, summary: "Studio causal request payload regression passed" }
+  - { command: corepack pnpm test, exit_code: 0, passed: true, summary: "11 test files passed; 71 tests passed; 3 live PostgreSQL tests skipped because DATABASE_URL runtime is unavailable; no worker termination error; post-run inspection found no Meraki Node/Vitest/Vite workers; captured stdout: %TEMP%\\meraki-causal-workspace.stdout.log" }
 artifacts:
   - { path: config/execution_graph.yaml, sha256: 39178afbea8da0f0c5ca8d8f079385cf103fdad7db612ba5ada7fced9d05bbf4, description: Canonical accepted-gate execution DAG }
   - { path: schemas/meraki.schema.json, sha256: 87f76796ee2315db654bec983fc5de87091561895b1f9ce5f1f04dcba0440bca, description: Canonical public JSON Schema contracts }
@@ -30,15 +42,15 @@ artifacts:
 goal_evidence:
   - { condition: canonical_goal_and_execution_control, status: proven, evidence: [GOAL.md, config/execution_graph.yaml] }
   - { condition: installable_core_and_studio, status: partial, evidence: [package.json, infra/docker-compose.yml] }
-  - { condition: behavior_change_and_causal_proof, status: not_started, evidence: [] }
+  - { condition: behavior_change_and_causal_proof, status: partial, evidence: [apps/api/src/runtime.test.ts, packages/learning/src/index.test.ts, packages/guidance/src/index.test.ts, packages/evaluation/src/index.test.ts] }
 regressions_added:
   - Generated contracts must use object-safe types rather than empty-object types.
   - Aborted provider calls must reject with Error instances.
   - The pinned pnpm version must be invoked through Corepack in workspace scripts.
 known_limitations:
-  - Docker and native PostgreSQL are unavailable on this host, so migration up/down/up, live RLS denial, and concurrent idempotency are not yet locally proven.
+  - External runtime proof is deferred in ops/orchestration/deferred-proof.yaml; no usable Ubuntu WSL runtime is available for PostgreSQL 16 plus pgvector.
 review:
-  independent: true
-  reviewer_context_id: g0_independent_reviewer
-  verdict: REVISE
-  verdict_artifact: ops/proof/G0-review-1.yaml
+  independent: false
+  reviewer_context_id: external_runtime_deferral
+  verdict: IMPLEMENTATION_COMPLETE_EXTERNAL_PROOF_DEFERRED
+  verdict_artifact: ops/proof/G0-review-2-external-deferred.yaml

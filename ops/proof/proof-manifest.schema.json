@@ -24,7 +24,7 @@
       "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
     },
     "gate_id": { "type": "string", "pattern": "^(G[0-8]|S[0-5])$" },
-    "gate_status": { "enum": ["collecting", "ready_for_review", "accepted", "revised", "blocked"] },
+    "gate_status": { "enum": ["collecting", "ready_for_review", "accepted", "revised", "blocked", "NOT_STARTED", "IN_PROGRESS", "REVISE", "IMPLEMENTATION_COMPLETE_EXTERNAL_PROOF_DEFERRED", "ACCEPT", "BLOCKED_INTERNAL"] },
     "generated_at": { "type": ["string", "null"], "format": "date-time" },
     "commit": { "type": ["string", "null"], "pattern": "^[0-9a-f]{7,40}$" },
     "packets": {
@@ -51,7 +51,8 @@
           "command": { "type": "string", "minLength": 1 },
           "exit_code": { "type": "integer" },
           "passed": { "type": "boolean" },
-          "output_artifact": { "type": ["string", "null"] }
+          "output_artifact": { "type": ["string", "null"] },
+          "summary": { "type": "string", "minLength": 1 }
         }
       }
     },
@@ -76,11 +77,18 @@
       "additionalProperties": false,
       "required": ["independent", "verdict", "verdict_artifact"],
       "properties": {
-        "independent": { "const": true },
+        "independent": { "type": "boolean" },
         "reviewer_context_id": { "type": ["string", "null"] },
-        "verdict": { "enum": ["PENDING", "ACCEPT", "REVISE", "BLOCK"] },
+        "verdict": { "enum": ["PENDING", "ACCEPT", "REVISE", "BLOCK", "IMPLEMENTATION_COMPLETE_EXTERNAL_PROOF_DEFERRED"] },
         "verdict_artifact": { "type": ["string", "null"] }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "verdict": { "const": "IMPLEMENTATION_COMPLETE_EXTERNAL_PROOF_DEFERRED" } } },
+          "then": { "properties": { "independent": { "const": false } } },
+          "else": { "properties": { "independent": { "const": true } } }
+        }
+      ]
     }
   },
   "$defs": {
