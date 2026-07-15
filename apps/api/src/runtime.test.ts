@@ -36,6 +36,7 @@ describe("connected agent adapter", () => {
     expect(report.relatedImproves).toBe(true);
     expect(report.unrelatedUnaffected).toBe(true);
     expect(report.targetedAblationRemovesImprovement).toBe(true);
+    expect(report.correctionBurden).toEqual({ baseline: 1, rawMemory: 1, merakiPack: 0, ablatedPack: 1 });
     expect(report.arms.merakiPack.related.trace.appliedAtomIds).toHaveLength(1);
     expect(report.arms.merakiPack.unrelated.output).toBe("BASELINE");
     expect(report.arms.rawMemory.unrelated.output).toContain(report.guidance);
@@ -46,7 +47,7 @@ describe("connected agent adapter", () => {
   it("exposes the connected causal proof through the canonical API", async () => {
     const response = await server.inject({ method: "POST", url: "/v1/evaluations/causal", payload: { experiment_id: "api-causal-proof", correction, related: { context: context(), request: "Draft", baseline: "BASELINE" }, unrelated: { context: context({ mode: "creative" }), request: "Draft", baseline: "BASELINE" } } });
     expect(response.statusCode).toBe(201);
-    expect(response.json<{ report: { relatedImproves: boolean; unrelatedUnaffected: boolean; targetedAblationRemovesImprovement: boolean } }>().report).toMatchObject({ relatedImproves: true, unrelatedUnaffected: true, targetedAblationRemovesImprovement: true });
+    expect(response.json<{ report: { relatedImproves: boolean; unrelatedUnaffected: boolean; targetedAblationRemovesImprovement: boolean; correctionBurden: Record<string, number> } }>().report).toMatchObject({ relatedImproves: true, unrelatedUnaffected: true, targetedAblationRemovesImprovement: true, correctionBurden: { baseline: 1, rawMemory: 1, merakiPack: 0, ablatedPack: 1 } });
   });
 
   it("exposes correction and run over REST with immutable evidence and trace", async () => {

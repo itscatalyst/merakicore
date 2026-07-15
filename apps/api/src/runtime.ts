@@ -56,6 +56,7 @@ export type ConnectedCausalComparison = Readonly<{
   guidance: string;
   arms: Readonly<{ baseline: ConnectedCausalArm; rawMemory: ConnectedCausalArm; merakiPack: ConnectedCausalArm; ablatedPack: ConnectedCausalArm }>;
   objectiveRecords: Readonly<{ merakiRelated: RecordedEvaluation; ablatedRelated: RecordedEvaluation }>;
+  correctionBurden: Readonly<{ baseline: number; rawMemory: number; merakiPack: number; ablatedPack: number }>;
   relatedImproves: boolean;
   unrelatedUnaffected: boolean;
   targetedAblationRemovesImprovement: boolean;
@@ -192,11 +193,13 @@ export const evaluateConnectedCausalComparison = (input: ConnectedCausalInput): 
   const ablatedCorrect = ablatedPack.related.output.includes(guidance);
   const merakiRelated = merakiRuntime.recordEvaluation({ runId: merakiPack.related.trace.runId, experimentId, armId: "meraki_pack", evaluatorClass: "objective", criteria: { expected_guidance: guidance, related: true }, result: merakiCorrect ? "win" : "loss", uncertainty: 0 });
   const ablatedRelated = ablatedRuntime.recordEvaluation({ runId: ablatedPack.related.trace.runId, experimentId, armId: "ablated_pack", evaluatorClass: "objective", criteria: { expected_guidance: guidance, related: true }, result: ablatedCorrect ? "win" : "loss", uncertainty: 0 });
+  const correctionBurden = (arm: ConnectedCausalArm): number => Number(!arm.related.output.includes(guidance)) + Number(arm.unrelated.output !== baseline.unrelated.baseline);
   return {
     experimentId,
     guidance,
     arms: { baseline, rawMemory, merakiPack, ablatedPack },
     objectiveRecords: { merakiRelated, ablatedRelated },
+    correctionBurden: { baseline: correctionBurden(baseline), rawMemory: correctionBurden(rawMemory), merakiPack: correctionBurden(merakiPack), ablatedPack: correctionBurden(ablatedPack) },
     relatedImproves: !baseline.related.output.includes(guidance) && merakiCorrect,
     unrelatedUnaffected: merakiPack.unrelated.output === baseline.unrelated.baseline && rawMemory.unrelated.output.includes(guidance),
     targetedAblationRemovesImprovement: merakiCorrect && !ablatedCorrect
