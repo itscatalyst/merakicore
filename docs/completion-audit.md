@@ -102,6 +102,17 @@ listed in `ops/orchestration/deferred-proof.yaml`.
 | Determinism, revocation, and malformed-input safety | Same focused command | Pass: repeated guidance requests return the same pack hash; examples expose canonical guidance; revoking the atom removes it; malformed feedback/outcome returns an error without a successful evidence receipt. | `apps/mcp/src/index.test.ts` |
 | MCP build and clean test process | `corepack pnpm --filter @meraki/mcp build` | Pass, exit `0`; TypeScript build completed. Focused Vitest process exited cleanly. | `apps/mcp/dist/index.js`, post-run process inspection |
 
+## Canonical Meraki launch-copy loop — 2026-07-15
+
+| Requirement | Exact command | Result | Evidence |
+|---|---|---|---|
+| Correction → immutable evidence → narrow scoped `judgment.copy` atom | `corepack pnpm --filter @meraki/api build`; `corepack pnpm exec vitest run apps/api/src/runtime.test.ts -t 'canonical Meraki launch-copy'` | Pass, exit `0`; correction is recorded, candidate is `judgment.copy`, lifecycle remains candidate until governed API commands, and the exact claim is preserved | `apps/api/src/runtime.test.ts`, `schemas/meraki.schema.json`, `packages/contracts/src/generated.ts` |
+| Approval/edit/rescope and relevant retrieval | Same focused command | Pass: edit, rescope, and confirm commands activate the atom; product-writing/public-founder-voice receives the claim while coding/engineering and client-email/formal negative controls remain baseline | `apps/api/src/runtime.test.ts` |
+| Complete lineage and connected behavior change | Same focused command | Pass: source, event, observation, signal, hypothesis, atom trace is inspectable; related run changes and carries the exact guidance | `GET /v1/profile/atoms/:id/trace`, `apps/api/src/runtime.test.ts` |
+| Feedback/outcome → evaluation → attributed update → later pack change | Same focused command | Pass: explicit feedback and objective outcome preserve trust classes; objective evaluation is recorded; reinforce proposal applies through governed approval and changes the later pack hash | `POST /v1/activity`, `POST /v1/outcomes`, `POST /v1/evaluations`, update-proposal routes |
+| Revocation removes future behavior | Same focused command | Pass: revoking the atom returns the related run to the generic baseline | `apps/api/src/runtime.test.ts` |
+| Full Core regression and worker cleanup | `corepack pnpm test` | Pass, exit `0`; 11 files / 75 tests passed, 1 live-PostgreSQL file / 3 tests skipped; no worker termination error; no Meraki Node/Vitest/Vite/Fastify process remained | Captured stdout: `%TEMP%\\meraki-v0-canonical-loop.stdout.log` |
+
 The goal must not be marked complete until the final row is executed against a
 real PostgreSQL 16 + pgvector instance and an independent reviewer accepts the
 result.

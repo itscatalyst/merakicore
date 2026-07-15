@@ -3,7 +3,7 @@ goal_id: meraki-core-studio-foundation
 native_goal_thread_id: 019f5a7d-d0ce-7170-9dc3-6e4aacfe3b02
 gate_id: G0
 gate_status: IMPLEMENTATION_COMPLETE_EXTERNAL_PROOF_DEFERRED
-generated_at: '2026-07-15T09:15:00+05:30'
+generated_at: '2026-07-15T09:50:00+05:30'
 commit: null
 packets:
   - { id: G0-C0, status: accepted, evidence: [] }
@@ -34,7 +34,9 @@ commands:
   - { command: "corepack pnpm exec vitest run apps/studio/src/App.test.tsx -t 'causal'", exit_code: 0, passed: true, summary: "Studio causal request payload regression passed" }
   - { command: corepack pnpm exec vitest run apps/mcp/src/index.test.ts, exit_code: 0, passed: true, summary: "8 MCP tests passed: connected retrieval, examples, explanation, feedback/outcome lineage, deterministic hash, revocation, wrong-mode exclusion, and malformed-input rejection" }
   - { command: corepack pnpm --filter @meraki/mcp build, exit_code: 0, passed: true, summary: "MCP TypeScript build passed" }
-  - { command: corepack pnpm test, exit_code: 0, passed: true, summary: "11 test files passed; 71 tests passed; 3 live PostgreSQL tests skipped because DATABASE_URL runtime is unavailable; no worker termination error; post-run inspection found no Meraki Node/Vitest/Vite workers; captured stdout: %TEMP%\\meraki-causal-workspace.stdout.log" }
+  - { command: "corepack pnpm contracts:generate && corepack pnpm contracts:check", exit_code: 0, passed: true, summary: "judgment.copy facet generated and public contracts validated" }
+  - { command: "corepack pnpm --filter @meraki/api build && corepack pnpm exec vitest run apps/api/src/runtime.test.ts -t 'canonical Meraki launch-copy'", exit_code: 0, passed: true, summary: "canonical launch-copy loop passed: immutable evidence, scoped candidate, governed lifecycle, related/negative controls, lineage, feedback/outcome evaluation, attributed update, later pack change, and revoke" }
+  - { command: corepack pnpm test, exit_code: 0, passed: true, summary: "11 test files passed; 75 tests passed; 3 live PostgreSQL tests skipped because DATABASE_URL runtime is unavailable; no worker termination error; post-run inspection found no Meraki Node/Vitest/Vite/Fastify workers; captured stdout: %TEMP%\\meraki-v0-canonical-loop.stdout.log" }
 artifacts:
   - { path: config/execution_graph.yaml, sha256: 39178afbea8da0f0c5ca8d8f079385cf103fdad7db612ba5ada7fced9d05bbf4, description: Canonical accepted-gate execution DAG }
   - { path: schemas/meraki.schema.json, sha256: 87f76796ee2315db654bec983fc5de87091561895b1f9ce5f1f04dcba0440bca, description: Canonical public JSON Schema contracts }

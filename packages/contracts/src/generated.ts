@@ -169,7 +169,7 @@ export type ProfileAtom = {
   "version" : number;
   "tenant_id" : Uuid;
   "subject_id" : Uuid;
-  "facet" : "fact" | "current_state" | "goal" | "identity_declaration" | "behavior" | "cognitive_pattern" | "communication" | "voice" | "taste" | "judgment" | "workflow" | "exemplar" | "anti_pattern" | "mode" | "uncertainty";
+  "facet" : "fact" | "current_state" | "goal" | "identity_declaration" | "behavior" | "cognitive_pattern" | "communication" | "voice" | "taste" | "judgment" | "judgment.copy" | "workflow" | "exemplar" | "anti_pattern" | "mode" | "uncertainty";
   "claim" : string;
   "epistemic_class" : "declared" | "observed" | "inferred" | "objective";
   "scope" : Scope;
