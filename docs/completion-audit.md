@@ -93,6 +93,15 @@ listed in `ops/orchestration/deferred-proof.yaml`.
 | Studio Evaluation Lab can launch and display the connected report | `corepack pnpm --filter @meraki/studio build`; `corepack pnpm exec vitest run apps/studio/src/App.test.tsx -t 'causal'` | Pass, exit `0`; production build passed and causal request payload regression passed | `apps/studio/src/App.tsx`, `apps/studio/src/App.test.tsx` |
 | Full workspace regression and worker cleanup | `corepack pnpm test` | Pass, exit `0`; 11 files / 71 tests passed, 1 live-PostgreSQL file / 3 tests skipped; no worker termination error; post-run inspection found `0` Meraki Node/Vitest/Vite processes | Captured stdout: `%TEMP%\\meraki-causal-workspace.stdout.log` |
 
+## MCP connected Core verification — 2026-07-15
+
+| Requirement | Exact command | Result | Evidence |
+|---|---|---|---|
+| Governed MCP tool surface | `corepack pnpm exec vitest run apps/mcp/src/index.test.ts` | Pass, exit `0`; 8 tests passed. The adapter exposes guidance, examples, explanation, feedback, and outcome tools; no direct profile-write or arbitrary memory-write tool exists. | `apps/mcp/src/index.ts`, `apps/mcp/src/index.test.ts` |
+| MCP reuses canonical connected learning and retrieval | Same focused command | Pass: one `ConnectedAgentRuntime` learns the approved correction and the MCP adapter retrieves it for the matching task/mode; creative mode receives no atom. | `apps/mcp/src/index.test.ts` |
+| Determinism, revocation, and malformed-input safety | Same focused command | Pass: repeated guidance requests return the same pack hash; examples expose canonical guidance; revoking the atom removes it; malformed feedback/outcome returns an error without a successful evidence receipt. | `apps/mcp/src/index.test.ts` |
+| MCP build and clean test process | `corepack pnpm --filter @meraki/mcp build` | Pass, exit `0`; TypeScript build completed. Focused Vitest process exited cleanly. | `apps/mcp/dist/index.js`, post-run process inspection |
+
 The goal must not be marked complete until the final row is executed against a
 real PostgreSQL 16 + pgvector instance and an independent reviewer accepts the
 result.

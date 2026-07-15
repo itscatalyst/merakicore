@@ -65,7 +65,8 @@
       "apps/api/src/runtime.test.ts + buildPersistentServer: a clean Fastify close/reopen loads the persistent JSON runtime and exposes the prior run and evaluation through fresh HTTP requests",
       "apps/api/src/runtime.test.ts + apps/studio/src/App.tsx: selected profile atoms expose the canonical source-event-observation-signal-hypothesis-atom chain through a read-only Live Learning trace",
       "apps/api/src/index.ts + apps/api/src/runtime.test.ts: canonical POST /v1/evaluations/causal exposes the connected baseline/raw-memory/Meraki/ablation report",
-      "apps/studio/src/App.tsx + apps/studio/src/App.test.tsx: Evaluation Lab exposes a connected causal proof control and displays related improvement, negative-control isolation, run IDs, and targeted ablation"
+      "apps/studio/src/App.tsx + apps/studio/src/App.test.tsx: Evaluation Lab exposes a connected causal proof control and displays related improvement, negative-control isolation, run IDs, and targeted ablation",
+      "apps/mcp/src/index.ts + apps/mcp/src/index.test.ts: MCP retrieval, examples, explanation, feedback, and outcome tools reuse one ConnectedAgentRuntime; deterministic hashes, revocation, wrong-mode exclusion, malformed-input rejection, and clean adapter boundaries pass"
   ],
   "last_transition": "2026-07-14T21:00:00+05:30"
 }
