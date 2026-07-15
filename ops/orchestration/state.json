@@ -74,7 +74,7 @@
     "apps/mcp/src/stdio.ts + apps/mcp/src/stdio.test.ts: MCP JSON-RPC initialize, tools/list, and tools/call requests are served through the canonical adapter and EOF exits naturally",
     "apps/api/src/index.ts: production API requests are authenticated by tenant/subject headers through a global request hook; tests inject deterministic authority",
     "apps/api/src/runtime.ts + apps/api/src/runtime.test.ts: correction burden uses an explicit guidance-channel objective contract; four-arm result remains baseline 1, raw memory 1, Meraki 0, ablation 1",
-    "corepack pnpm test -- --reporter=dot: 12 files and 81 tests passed; 3 live PostgreSQL tests skipped externally; no Meraki workers remained",
+    "corepack pnpm test -- --reporter=dot: 12 files and 82 tests passed; 3 live PostgreSQL tests skipped externally; no Meraki workers remained",
     "corepack pnpm build + corepack pnpm typecheck + corepack pnpm contracts:check + git diff --check: workspace verification passed"
   ],
   "last_transition": "2026-07-15T13:35:00+05:30"
