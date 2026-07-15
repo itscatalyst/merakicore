@@ -5,5 +5,5 @@
   "type": "module",
   "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
   "scripts": { "build": "tsc -b", "typecheck": "tsc -b --pretty false" },
-  "dependencies": { "@meraki/contracts": "workspace:*", "@meraki/evidence": "workspace:*", "@meraki/learning": "workspace:*", "fastify": "^5.6.0" }
+  "dependencies": { "@meraki/contracts": "workspace:*", "@meraki/evidence": "workspace:*", "@meraki/learning": "workspace:*", "@meraki/security": "workspace:*", "fastify": "^5.6.0" }
 }

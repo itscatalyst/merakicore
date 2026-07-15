@@ -53,6 +53,9 @@ importers:
       '@meraki/learning':
         specifier: workspace:*
         version: link:../../packages/learning
+      '@meraki/security':
+        specifier: workspace:*
+        version: link:../../packages/security
       fastify:
         specifier: ^5.6.0
         version: 5.10.0
@@ -70,6 +73,9 @@ importers:
       '@meraki/evidence':
         specifier: workspace:*
         version: link:../../packages/evidence
+      '@meraki/security':
+        specifier: workspace:*
+        version: link:../../packages/security
 
   apps/studio:
     dependencies:

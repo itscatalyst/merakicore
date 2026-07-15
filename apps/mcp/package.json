@@ -3,6 +3,6 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "scripts": { "build": "tsc -b", "typecheck": "tsc -b --pretty false" },
-  "dependencies": { "@meraki/api": "workspace:*", "@meraki/contracts": "workspace:*", "@meraki/evidence": "workspace:*" }
+  "scripts": { "build": "tsc -b", "typecheck": "tsc -b --pretty false", "start": "node dist/stdio.js" },
+  "dependencies": { "@meraki/api": "workspace:*", "@meraki/contracts": "workspace:*", "@meraki/evidence": "workspace:*", "@meraki/security": "workspace:*" }
 }

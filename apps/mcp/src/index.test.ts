@@ -61,4 +61,14 @@ describe("Meraki MCP adapter", () => {
     const result = await new MerakiMcpAdapter().handle({ name: "meraki_get_guidance", arguments: { context: {} } });
     expect(result).toMatchObject({ isError: true, content: { code: "TASK_CONTEXT_INCOMPLETE" } });
   });
+  it("rejects tenant or subject tampering before MCP state mutation", async () => {
+    const runtime = new ConnectedAgentRuntime();
+    const adapter = new MerakiMcpAdapter(runtime);
+    const before = runtime.snapshot();
+    const guidance = await adapter.handle({ name: "meraki_get_guidance", arguments: { context: { ...context, tenant_id: "tenant-attacker" } } });
+    expect(guidance).toMatchObject({ isError: true, content: { code: "identity_mismatch" } });
+    const feedback = await adapter.handle({ name: "meraki_record_feedback", arguments: { ...correction, tenantId: "tenant-attacker" } });
+    expect(feedback).toMatchObject({ isError: true, content: { code: "identity_mismatch" } });
+    expect(runtime.snapshot()).toEqual(before);
+  });
 });

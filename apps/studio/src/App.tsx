@@ -73,7 +73,7 @@ const loadLearningTrace = async (atomId: string): Promise<LearningTraceView> => 
   return (await response.json() as { trace: LearningTraceView }).trace;
 };
 
-const CausalEvaluationPanel = ({ report, onRun }: { report?: CausalReportView; onRun: () => void }) => <section className="evaluation-viewer"><h2>Connected causal proof</h2><div className="actions"><button onClick={onRun}>Run connected causal proof</button></div>{report && <><p className="mono">experiment {report.experimentId} · guidance: {report.guidance}</p><p>{report.relatedImproves ? "Related output improved." : "Related improvement not proven."} {report.unrelatedUnaffected ? "Unrelated control remained baseline." : "Unrelated control changed."} {report.targetedAblationRemovesImprovement ? "Targeted ablation removed the improvement." : "Targeted ablation did not remove the improvement."}</p><p>Correction burden: baseline {report.correctionBurden.baseline}, raw memory {report.correctionBurden.rawMemory}, Meraki Pack {report.correctionBurden.merakiPack}, ablated {report.correctionBurden.ablatedPack}.</p><ul><li>Meraki related run: <span className="mono">{report.arms.merakiPack.related.trace.runId}</span> ({report.objectiveRecords.merakiRelated.evaluation.result})</li><li>Raw-memory unrelated run: <span className="mono">{report.arms.rawMemory.unrelated.trace.runId}</span></li><li>Ablated related run: <span className="mono">{report.arms.ablatedPack.related.trace.runId}</span> ({report.objectiveRecords.ablatedRelated.evaluation.result})</li></ul></>}</section>;
+const CausalEvaluationPanel = ({ report, onRun }: { report: CausalReportView | undefined; onRun: () => void }) => <section className="evaluation-viewer"><h2>Connected causal proof</h2><div className="actions"><button onClick={onRun}>Run connected causal proof</button></div>{report && <><p className="mono">experiment {report.experimentId} · guidance: {report.guidance}</p><p>{report.relatedImproves ? "Related output improved." : "Related improvement not proven."} {report.unrelatedUnaffected ? "Unrelated control remained baseline." : "Unrelated control changed."} {report.targetedAblationRemovesImprovement ? "Targeted ablation removed the improvement." : "Targeted ablation did not remove the improvement."}</p><p>Correction burden: baseline {report.correctionBurden.baseline}, raw memory {report.correctionBurden.rawMemory}, Meraki Pack {report.correctionBurden.merakiPack}, ablated {report.correctionBurden.ablatedPack}.</p><ul><li>Meraki related run: <span className="mono">{report.arms.merakiPack.related.trace.runId}</span> ({report.objectiveRecords.merakiRelated.evaluation.result})</li><li>Raw-memory unrelated run: <span className="mono">{report.arms.rawMemory.unrelated.trace.runId}</span></li><li>Ablated related run: <span className="mono">{report.arms.ablatedPack.related.trace.runId}</span> ({report.objectiveRecords.ablatedRelated.evaluation.result})</li></ul></>}</section>;
 
 export function App() {
   const [atoms, setAtoms] = useState<ProfileAtom[]>([]);
@@ -149,8 +149,9 @@ export function App() {
     try {
       const response = await fetch("/v1/evaluations/causal", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(causalEvaluationPayload(correctionDraft)) });
       const result = await response.json() as { report?: CausalReportView; error?: string };
-      if (!response.ok || !result.report) throw new Error(result.error ?? "CAUSAL_EVALUATION_FAILED");
-      setCausalReport(result.report);
+      const report = result.report;
+      if (!response.ok || !report) throw new Error(result.error ?? "CAUSAL_EVALUATION_FAILED");
+      setCausalReport(report);
       setNotice("Connected causal proof completed: related improvement, negative control, and targeted ablation are visible below.");
     } catch (error) { setNotice(`Causal proof was not run: ${error instanceof Error ? error.message : "CAUSAL_EVALUATION_FAILED"}`); }
   };

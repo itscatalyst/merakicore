@@ -167,6 +167,7 @@ export class LearningEngine {
     const lesson = this.requireLesson(lessonId);
     const event = this.evidenceLedger.getEvent(counterevidenceEventId);
     if (event.tenant_id !== lesson.tenant_id || event.subject_id !== lesson.subject_id) throw new Error("COUNTEREVIDENCE_SUBJECT_MISMATCH");
+    this.assertEvidenceCompatibility(lesson, event, "COUNTEREVIDENCE_SCOPE_MISMATCH", "COUNTEREVIDENCE_MODE_MISMATCH");
     const span = event.evidence_spans[0];
     if (!span) throw new Error("COUNTEREVIDENCE_SPAN_REQUIRED");
     const atom = this.profile.weaken(lessonId, span, expectedVersion);
@@ -194,6 +195,7 @@ export class LearningEngine {
     const event = this.evidenceLedger.getEvent(evidenceEventId);
     const source = this.evidenceLedger.getSource(event.source_id);
     if (event.tenant_id !== lesson.tenant_id || event.subject_id !== lesson.subject_id) throw new Error("UPDATE_EVIDENCE_SUBJECT_MISMATCH");
+    this.assertEvidenceCompatibility(lesson, event, "UPDATE_EVIDENCE_SCOPE_MISMATCH", "UPDATE_EVIDENCE_MODE_MISMATCH");
     if (source.trust_class !== "explicit_user" && source.trust_class !== "objective_outcome") throw new Error("UPDATE_EVIDENCE_TRUST_REQUIRED");
     const evidence = event.evidence_spans[0];
     if (!evidence) throw new Error("UPDATE_EVIDENCE_SPAN_REQUIRED");
@@ -274,6 +276,11 @@ export class LearningEngine {
     return engine;
   }
   private requireLesson(id: string): Lesson { const lesson = this.lessons.get(id); if (!lesson) throw new Error("LESSON_NOT_FOUND"); return lesson; }
+  private assertEvidenceCompatibility(lesson: Lesson, event: Event, scopeError: string, modeError: string): void {
+    const eventScope = event.payload.scope;
+    if (!eventScope || typeof eventScope !== "object" || (eventScope as Scope).level !== lesson.scope.level || (eventScope as Scope).ref !== lesson.scope.ref) throw new Error(scopeError);
+    if (lesson.mode !== undefined && event.payload.mode !== lesson.mode) throw new Error(modeError);
+  }
   private requireUpdateProposal(id: string): GovernedUpdateProposal { const proposal = this.updateProposalRecords.get(id); if (!proposal) throw new Error("UPDATE_PROPOSAL_NOT_FOUND"); return proposal; }
 }
 

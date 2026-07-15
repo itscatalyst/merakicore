@@ -15,6 +15,28 @@ export class AuthorizationError extends Error {
   }
 }
 
+export class IdentityMismatchError extends Error {
+  public readonly code = "identity_mismatch";
+  public constructor() {
+    super("Request identity does not match the authenticated principal");
+    this.name = "IdentityMismatchError";
+  }
+}
+
+export function resolveAuthenticatedContext(): AuthenticatedContext {
+  const tenantId = process.env.MERAKI_TENANT_ID;
+  const subjectId = process.env.MERAKI_SUBJECT_ID;
+  const actorId = process.env.MERAKI_ACTOR_ID;
+  const sessionId = process.env.MERAKI_SESSION_ID;
+  if (tenantId && subjectId && actorId && sessionId) return { tenantId, subjectId, actorId, sessionId, scopes: new Set(["profile:read", "profile:write", "evidence:write", "evaluation:write"]) };
+  if (process.env.NODE_ENV === "test") return { tenantId: "tenant-a", subjectId: "user-a", actorId: "user-a", sessionId: "test-session", scopes: new Set(["profile:read", "profile:write", "evidence:write", "evaluation:write"]) };
+  throw new Error("AUTHENTICATED_CONTEXT_REQUIRED");
+}
+
+export function assertAuthenticatedIdentity(context: AuthenticatedContext, identity: { tenantId?: unknown; subjectId?: unknown; actorId?: unknown }): void {
+  if (identity.tenantId !== context.tenantId || identity.subjectId !== context.subjectId || (identity.actorId !== undefined && identity.actorId !== context.actorId)) throw new IdentityMismatchError();
+}
+
 /**
  * Returns only server-authenticated authority. Callers must not merge request
  * payload tenant or subject fields into this context.

@@ -123,6 +123,14 @@ describe("Meraki learning vertical slice", () => {
     expect(() => engine.proposeUpdate(receipt.lesson.id, modelOutput.event.id, "reinforce")).toThrow("UPDATE_EVIDENCE_TRUST_REQUIRED");
   });
 
+  it("rejects unrelated scope or mode evidence from weakening or updating an atom", () => {
+    const engine = new LearningEngine();
+    const receipt = engine.learn(base);
+    const unrelated = engine.recordOutcome({ tenantId: "tenant-a", subjectId: "user-a", runId: "unrelated", outcomeType: "accepted", outcome: { accepted: true }, scope: { level: "project", ref: "other-project" }, mode: "creative" });
+    expect(() => engine.weaken(receipt.lesson.id, unrelated.event.id, receipt.lesson.version)).toThrow("COUNTEREVIDENCE_SCOPE_MISMATCH");
+    expect(() => engine.proposeUpdate(receipt.lesson.id, unrelated.event.id, "reinforce")).toThrow("UPDATE_EVIDENCE_SCOPE_MISMATCH");
+  });
+
   it("restores evidence, profile lifecycle, and retrieval through a new engine instance", async () => {
     const directory = await mkdtemp(join(tmpdir(), "meraki-engine-"));
     try {

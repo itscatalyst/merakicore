@@ -50,6 +50,33 @@ describe("connected agent adapter", () => {
     expect(response.json<{ report: { relatedImproves: boolean; unrelatedUnaffected: boolean; targetedAblationRemovesImprovement: boolean; correctionBurden: Record<string, number> } }>().report).toMatchObject({ relatedImproves: true, unrelatedUnaffected: true, targetedAblationRemovesImprovement: true, correctionBurden: { baseline: 1, rawMemory: 1, merakiPack: 0, ablatedPack: 1 } });
   });
 
+  it("rejects REST tenant tampering before evidence or run mutation", async () => {
+    const runtime = new ConnectedAgentRuntime();
+    const isolated = buildServer(runtime);
+    await isolated.ready();
+    const before = runtime.snapshot();
+    const activity = await isolated.inject({ method: "POST", url: "/v1/activity", payload: { tenantId: "tenant-attacker", subjectId: "user-a", actorId: "user-a", runId: "attack", taskType: "email", activityType: "approval", content: "approved", scope: correction.scope } });
+    expect(activity.statusCode).toBe(400);
+    expect(activity.json<{ error: string }>().error).toBe("identity_mismatch");
+    const run = await isolated.inject({ method: "POST", url: "/v1/agent/run", payload: { context: { ...context({}), tenant_id: "tenant-attacker" }, request: "Draft", baseline: "BASELINE" } });
+    expect(run.statusCode).toBe(400);
+    expect(run.json<{ error: string }>().error).toBe("identity_mismatch");
+    expect(runtime.snapshot()).toEqual(before);
+    await isolated.close();
+  });
+
+  it("rejects valid-identity malformed activity without mutating the runtime", async () => {
+    const runtime = new ConnectedAgentRuntime();
+    const isolated = buildServer(runtime);
+    await isolated.ready();
+    const before = runtime.snapshot();
+    const response = await isolated.inject({ method: "POST", url: "/v1/activity", payload: { tenantId: "tenant-a", subjectId: "user-a", actorId: "user-a", runId: "malformed", taskType: "email", activityType: "approval", scope: correction.scope } });
+    expect(response.statusCode).toBe(400);
+    expect(response.json<{ error: string }>().error).toBe("CONTENT_REQUIRED");
+    expect(runtime.snapshot()).toEqual(before);
+    await isolated.close();
+  });
+
   it("exposes correction and run over REST with immutable evidence and trace", async () => {
     const response = await server.inject({ method: "POST", url: "/v1/learning", payload: correction });
     expect(response.statusCode).toBe(201);

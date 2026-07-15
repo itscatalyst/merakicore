@@ -116,3 +116,24 @@ listed in `ops/orchestration/deferred-proof.yaml`.
 The goal must not be marked complete until the final row is executed against a
 real PostgreSQL 16 + pgvector instance and an independent reviewer accepts the
 result.
+
+## Reviewer remediation verification — 2026-07-15
+
+| Requirement | Exact command | Result | Evidence |
+|---|---|---|---|
+| Authenticated identity authority and malformed-input safety | `corepack pnpm exec vitest run apps/mcp/src/index.test.ts apps/mcp/src/stdio.test.ts packages/evidence/src/index.test.ts packages/learning/src/index.test.ts apps/api/src/runtime.test.ts` | Pass: 10 MCP/stdio, 19 evidence+learning, and 20 API tests; tenant/subject tampering is rejected before mutation, malformed valid-identity requests leave snapshots unchanged, and scope/mode-incompatible updates are rejected | `packages/security/src/index.ts`, `apps/api/src/index.ts`, `apps/mcp/src/index.ts`, focused test files |
+| Reserved evidence-field spoofing and outcome idempotency | Same focused command | Pass: public activity payloads cannot override canonical actor/run/task/scope/security fields; reordered duplicate outcomes return the original immutable chain | `packages/evidence/src/index.ts`, `packages/evidence/src/index.test.ts` |
+| Real MCP stdio transport and clean exit | `corepack pnpm exec vitest run apps/mcp/src/index.test.ts apps/mcp/src/stdio.test.ts` | Pass: 10 tests; built `apps/mcp/dist/stdio.js` serves a newline-delimited request and exits with code 0 after stdin closes; no forced termination | `apps/mcp/src/stdio.ts`, `apps/mcp/src/stdio.test.ts` |
+| Objective correction-burden semantics | `corepack pnpm exec vitest run apps/api/src/runtime.test.ts -t 'compares actual connected baseline, raw-memory, Meraki, and targeted-ablation arms'` | Pass: baseline 1, raw memory 1, Meraki 0, targeted ablation 1; guidance is counted only in the explicit rendered guidance channel, not by incidental baseline substring | `apps/api/src/runtime.ts`, `apps/api/src/runtime.test.ts` |
+| Guidance/profile/API/evaluation focused suites | `corepack pnpm exec vitest run packages/guidance/src/index.test.ts packages/profile/src/index.test.ts apps/api/src/runtime.test.ts packages/evaluation/src/index.test.ts` | Pass: 2+5+19+4 tests; deterministic retrieval, lifecycle, connected runtime, and causal evaluation remain green | Focused package suites |
+| Full workspace tests | `corepack pnpm test -- --reporter=dot` | Pass, exit 0; 12 files passed, 1 live-PostgreSQL file skipped; 82 tests passed, 3 expected external skips | Vitest output captured in session; no Meraki orphan process after completion |
+| Workspace build/typecheck/contracts | `corepack pnpm build`; `corepack pnpm typecheck`; `corepack pnpm contracts:check`; `git diff --check` | Pass: all workspace builds and typechecks, contracts valid, no diff whitespace errors | Command outputs and worktree |
+| Worker cleanup | `Get-CimInstance Win32_Process -Filter \"Name = 'node.exe'\" ...` filtered for `meraki-core|vitest|fastify|mcp/dist/stdio` | Pass: no matching Meraki/Vitest/Fastify/stdio process remained after verification | Post-run process inspection |
+
+## Final Core v0 review — 2026-07-15
+
+| Requirement | Exact command/evidence | Result |
+|---|---|---|
+| MCP protocol boundary | `apps/mcp/src/stdio.ts` and `apps/mcp/src/stdio.test.ts`; focused MCP/API run: `corepack pnpm exec vitest run apps/mcp/src/index.test.ts apps/mcp/src/stdio.test.ts apps/api/src/runtime.test.ts` | Pass, 30 tests; stdio supports JSON-RPC `initialize`, `tools/list`, and `tools/call`, then closes naturally on EOF |
+| Authenticated API boundary | `apps/api/src/index.ts` `onRequest` hook and focused API tests | Pass; production requests require authenticated tenant/subject headers, while test authority remains injected and deterministic |
+| Fresh independent reviewer | `/root/core_v0_reviewer_final` | ACCEPT; no unresolved critical/high issue. Medium protocol/schema polish remains non-blocking for v0 |

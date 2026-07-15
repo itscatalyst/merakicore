@@ -66,6 +66,12 @@ const evaluationPriority = (evaluatorClass: Evaluation["evaluator_class"]): numb
 const effectFromResult = (result: Evaluation["result"]): number => result === "win" ? 1 : result === "loss" ? -1 : 0;
 const digest = (value: string): `sha256:${string}` => `sha256:${createHash("sha256").update(value).digest("hex")}`;
 const tokenCount = (value: string): number => value.trim() ? value.trim().split(/\s+/).length : 0;
+/** Objective contract: guidance counts only when rendered in the explicit guidance
+ * channel, never merely because the baseline happens to contain the same text. */
+const containsExpectedGuidance = (output: string, guidance: string): boolean =>
+  output.split("\n").some((line) =>
+    (line.startsWith("Meraki guidance applied: ") || line.startsWith("Raw memory applied: ")) &&
+    line.slice(line.indexOf(": ") + 2) === guidance);
 
 /** Adapter-neutral connected-agent runtime. A model adapter can replace render() while retaining the Meraki trace. */
 export class ConnectedAgentRuntime {
@@ -189,19 +195,19 @@ export const evaluateConnectedCausalComparison = (input: ConnectedCausalInput): 
   const rawMemory: ConnectedCausalArm = { related: rawMemoryRuntime.runRawMemory(input.related, guidance), unrelated: rawMemoryRuntime.runRawMemory(input.unrelated, guidance), tokenCount: tokenCount(guidance) };
   const merakiPack: ConnectedCausalArm = { related: merakiRuntime.run(input.related), unrelated: merakiRuntime.run(input.unrelated), tokenCount: tokenCount(guidance) };
   const ablatedPack: ConnectedCausalArm = { related: ablatedRuntime.run(input.related), unrelated: ablatedRuntime.run(input.unrelated), tokenCount: 0 };
-  const merakiCorrect = merakiPack.related.output.includes(guidance);
-  const ablatedCorrect = ablatedPack.related.output.includes(guidance);
+  const merakiCorrect = containsExpectedGuidance(merakiPack.related.output, guidance);
+  const ablatedCorrect = containsExpectedGuidance(ablatedPack.related.output, guidance);
   const merakiRelated = merakiRuntime.recordEvaluation({ runId: merakiPack.related.trace.runId, experimentId, armId: "meraki_pack", evaluatorClass: "objective", criteria: { expected_guidance: guidance, related: true }, result: merakiCorrect ? "win" : "loss", uncertainty: 0 });
   const ablatedRelated = ablatedRuntime.recordEvaluation({ runId: ablatedPack.related.trace.runId, experimentId, armId: "ablated_pack", evaluatorClass: "objective", criteria: { expected_guidance: guidance, related: true }, result: ablatedCorrect ? "win" : "loss", uncertainty: 0 });
-  const correctionBurden = (arm: ConnectedCausalArm): number => Number(!arm.related.output.includes(guidance)) + Number(arm.unrelated.output !== baseline.unrelated.baseline);
+  const correctionBurden = (arm: ConnectedCausalArm): number => Number(!containsExpectedGuidance(arm.related.output, guidance)) + Number(arm.unrelated.output !== baseline.unrelated.baseline);
   return {
     experimentId,
     guidance,
     arms: { baseline, rawMemory, merakiPack, ablatedPack },
     objectiveRecords: { merakiRelated, ablatedRelated },
     correctionBurden: { baseline: correctionBurden(baseline), rawMemory: correctionBurden(rawMemory), merakiPack: correctionBurden(merakiPack), ablatedPack: correctionBurden(ablatedPack) },
-    relatedImproves: !baseline.related.output.includes(guidance) && merakiCorrect,
-    unrelatedUnaffected: merakiPack.unrelated.output === baseline.unrelated.baseline && rawMemory.unrelated.output.includes(guidance),
+    relatedImproves: !containsExpectedGuidance(baseline.related.output, guidance) && merakiCorrect,
+    unrelatedUnaffected: merakiPack.unrelated.output === baseline.unrelated.baseline && containsExpectedGuidance(rawMemory.unrelated.output, guidance),
     targetedAblationRemovesImprovement: merakiCorrect && !ablatedCorrect
   };
 };
