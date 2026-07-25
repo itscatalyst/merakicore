@@ -59,8 +59,7 @@ export const runStdioTransport = async (adapter = new MerakiMcpAdapter()): Promi
     buffer = lines.pop() ?? "";
     for (const line of lines) pending = pending.then(() => handleLine(line));
   });
-  process.stdin.resume();
-  await new Promise<void>((resolve) => {
+  const inputClosed = new Promise<void>((resolve) => {
     let settled = false;
     const finish = (): void => {
       if (settled) return;
@@ -73,6 +72,11 @@ export const runStdioTransport = async (adapter = new MerakiMcpAdapter()): Promi
     process.stdin.once("end", finish);
     process.stdin.once("close", finish);
   });
+  // Install EOF listeners before entering flowing mode. Otherwise a fast
+  // writer can close stdin between resume() and listener registration,
+  // leaving the transport waiting forever despite having received EOF.
+  process.stdin.resume();
+  await inputClosed;
   if (buffer.trim()) pending = pending.then(() => handleLine(buffer));
   await pending;
 };
