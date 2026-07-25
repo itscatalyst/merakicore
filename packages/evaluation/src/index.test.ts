@@ -2,7 +2,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { evaluateCausalComparison, evaluateControlled, JsonLearningLedger, LearningLedger, verifyRestart } from "./index.js";
+import {
+  evaluateCausalComparison,
+  evaluateControlled,
+  JsonLearningLedger,
+  LearningLedger,
+  verifyRestart
+} from "./index.js";
 
 describe("Meraki objective proof", () => {
   it("shows targeted improvement and ablation attribution", () => {
@@ -18,9 +24,11 @@ describe("Meraki objective proof", () => {
     expect(() => ledger.appendCorrection({ ...e, statement: "tampered" })).toThrow("immutable evidence conflict");
   });
   it("survives a save/restart/load cycle", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "meraki-eval-")); const path = join(dir, "ledger.json");
+    const dir = await mkdtemp(join(tmpdir(), "meraki-eval-"));
+    const path = join(dir, "ledger.json");
     await expect(verifyRestart(path)).resolves.toBe(true);
-    const restored = await new JsonLearningLedger(path).load(); expect(restored.relevant("formatting", "editorial")?.lifecycle).toBe("approved");
+    const restored = await new JsonLearningLedger(path).load();
+    expect(restored.relevant("formatting", "editorial")?.lifecycle).toBe("approved");
     await rm(dir, { recursive: true, force: true });
   });
   it("compares baseline, equal-token raw memory, Meraki Pack, and a targeted ablation", () => {

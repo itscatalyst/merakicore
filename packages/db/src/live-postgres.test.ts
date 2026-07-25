@@ -67,17 +67,17 @@ describeLive("live PostgreSQL foundation", () => {
     const left = await roleSession();
     const right = await roleSession();
     try {
-      const insert = (session: PostgresDatabaseSession) => session.transaction(
-        context(TENANT_A, SUBJECT_A),
-        (client) => client.query<{ idempotency_key: string }>(
-          `INSERT INTO idempotency_receipts
+      const insert = (session: PostgresDatabaseSession) =>
+        session.transaction(context(TENANT_A, SUBJECT_A), (client) =>
+          client.query<{ idempotency_key: string }>(
+            `INSERT INTO idempotency_receipts
              (tenant_id, subject_id, idempotency_key, request_hash, state)
            VALUES ($1, $2, 'race-key', repeat('a', 64), 'processing')
            ON CONFLICT (tenant_id, subject_id, idempotency_key) DO NOTHING
            RETURNING idempotency_key`,
-          [TENANT_A, SUBJECT_A]
-        )
-      );
+            [TENANT_A, SUBJECT_A]
+          )
+        );
       const results = await Promise.all([insert(left.session), insert(right.session)]);
       expect(results.map((result) => result.rowCount).sort()).toEqual([0, 1]);
       const durable = await admin.query<{ count: string }>(

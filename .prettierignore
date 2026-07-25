@@ -1,0 +1,15 @@
+**/dist/**
+**/coverage/**
+pnpm-lock.yaml
+planning/**
+
+# Prose, canonical contracts, and orchestration data keep their hand-maintained layout.
+**/*.md
+**/*.yaml
+**/*.yml
+schemas/**
+api/**
+ops/**
+
+# Emitted by scripts/contracts/generate.py; reformatting would break contracts:check.
+packages/contracts/src/generated.ts

@@ -28,16 +28,12 @@ export class DeterministicEmbeddingProvider implements EmbeddingProvider {
   public embed(request: EmbeddingRequest): Promise<EmbeddingResult> {
     if (request.signal?.aborted === true) {
       return Promise.reject(
-        request.signal.reason instanceof Error
-          ? request.signal.reason
-          : new Error("Embedding request aborted")
+        request.signal.reason instanceof Error ? request.signal.reason : new Error("Embedding request aborted")
       );
     }
     const vectors = request.inputs.map((input) => {
       const bytes = createHash("sha256").update(input, "utf8").digest();
-      return Array.from({ length: this.dimensions }, (_, index) =>
-        (bytes[index % bytes.length]! / 127.5) - 1
-      );
+      return Array.from({ length: this.dimensions }, (_, index) => bytes[index % bytes.length]! / 127.5 - 1);
     });
     return Promise.resolve({
       provider: "deterministic-fake",

@@ -34,18 +34,27 @@ export default tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          "patterns": [
+          patterns: [
             {
-              "group": ["@meraki/*/src", "@meraki/*/src/**"],
-              "message": "Import another workspace through its public package export."
+              group: ["@meraki/*/src", "@meraki/*/src/**"],
+              message: "Import another workspace through its public package export."
             },
             {
-              "group": ["apps/*", "apps/**"],
-              "message": "Workspace packages must never depend on application internals."
+              group: ["apps/*", "apps/**"],
+              message: "Workspace packages must never depend on application internals."
             }
           ]
         }
       ]
+    }
+  },
+  {
+    // Vitest asymmetric matchers (expect.any, expect.stringContaining, ...) are typed as `any`,
+    // so the unsafe-value rules fire on every assertion rather than on real type holes.
+    files: ["**/*.test.ts", "**/*.test.tsx"],
+    rules: {
+      "@typescript-eslint/no-unsafe-assignment": "off",
+      "@typescript-eslint/no-unsafe-argument": "off"
     }
   },
   {
