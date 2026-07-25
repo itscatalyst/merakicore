@@ -20,6 +20,8 @@
     "test": "vitest run --passWithNoTests",
     "db:migrate": "corepack pnpm --filter @meraki/db build && node packages/db/dist/migrate.js up",
     "db:rollback": "corepack pnpm --filter @meraki/db build && node packages/db/dist/migrate.js down",
+    "db:bootstrap-roles": "corepack pnpm --filter @meraki/db build && node packages/db/dist/bootstrap-roles.js",
+    "db:restart-proof": "corepack pnpm --filter @meraki/db build && node packages/db/dist/restart-proof.js",
     "db:test-migrations": "vitest run packages/db/src/migrations.test.ts",
     "db:test-live": "node scripts/db/run-live-tests.mjs",
     "security:test-isolation": "vitest run packages/db/src/migrations.test.ts packages/security/src/index.test.ts",

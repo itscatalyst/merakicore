@@ -1,18 +1,5 @@
-BEGIN;
-
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS vector;
-
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'meraki_app') THEN
-    CREATE ROLE meraki_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'meraki_worker') THEN
-    CREATE ROLE meraki_worker NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
-  END IF;
-END
-$$;
 
 CREATE FUNCTION meraki_current_tenant_id() RETURNS uuid
   LANGUAGE sql STABLE PARALLEL SAFE
@@ -21,6 +8,14 @@ CREATE FUNCTION meraki_current_tenant_id() RETURNS uuid
 CREATE FUNCTION meraki_current_subject_id() RETURNS uuid
   LANGUAGE sql STABLE PARALLEL SAFE
   RETURN NULLIF(current_setting('meraki.subject_id', true), '')::uuid;
+
+CREATE FUNCTION meraki_current_actor_id() RETURNS uuid
+  LANGUAGE sql STABLE PARALLEL SAFE
+  RETURN NULLIF(current_setting('meraki.actor_id', true), '')::uuid;
+
+CREATE FUNCTION meraki_current_session_id() RETURNS uuid
+  LANGUAGE sql STABLE PARALLEL SAFE
+  RETURN NULLIF(current_setting('meraki.session_id', true), '')::uuid;
 
 CREATE TABLE tenants (
   id uuid PRIMARY KEY,
@@ -121,14 +116,27 @@ CREATE POLICY job_isolation ON jobs
   WITH CHECK (tenant_id = meraki_current_tenant_id() AND subject_id = meraki_current_subject_id());
 CREATE POLICY audit_isolation ON audit_entries
   USING (tenant_id = meraki_current_tenant_id() AND subject_id = meraki_current_subject_id())
-  WITH CHECK (tenant_id = meraki_current_tenant_id() AND subject_id = meraki_current_subject_id());
+  WITH CHECK (
+    tenant_id = meraki_current_tenant_id()
+    AND subject_id = meraki_current_subject_id()
+    AND actor_id = meraki_current_actor_id()
+    AND session_id = meraki_current_session_id()
+  );
 
-REVOKE ALL ON ALL TABLES IN SCHEMA public FROM PUBLIC;
-REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC;
+REVOKE ALL ON TABLE tenants, subjects, idempotency_receipts, jobs, audit_entries FROM PUBLIC;
+REVOKE ALL ON FUNCTION
+  meraki_current_tenant_id(),
+  meraki_current_subject_id(),
+  meraki_current_actor_id(),
+  meraki_current_session_id()
+FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO meraki_app, meraki_worker;
 GRANT SELECT, INSERT, UPDATE ON tenants, subjects, idempotency_receipts, jobs TO meraki_app, meraki_worker;
 GRANT SELECT, INSERT ON audit_entries TO meraki_app, meraki_worker;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO meraki_app, meraki_worker;
-GRANT EXECUTE ON FUNCTION meraki_current_tenant_id(), meraki_current_subject_id() TO meraki_app, meraki_worker;
-
-COMMIT;
+GRANT USAGE, SELECT ON SEQUENCE audit_entries_sequence_id_seq TO meraki_app, meraki_worker;
+GRANT EXECUTE ON FUNCTION
+  meraki_current_tenant_id(),
+  meraki_current_subject_id(),
+  meraki_current_actor_id(),
+  meraki_current_session_id()
+TO meraki_app, meraki_worker;

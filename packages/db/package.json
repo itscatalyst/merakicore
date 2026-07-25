@@ -13,7 +13,9 @@
     "build": "tsc -b",
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run src/migrations.test.ts",
-    "test:live": "vitest run src/live-postgres.test.ts"
+    "test:live": "vitest run src/live-postgres.test.ts",
+    "bootstrap:roles": "node dist/bootstrap-roles.js",
+    "restart:proof": "node dist/restart-proof.js"
   },
   "dependencies": {
     "pg": "^8.16.3"

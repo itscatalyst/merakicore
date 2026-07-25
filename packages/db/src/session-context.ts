@@ -30,12 +30,21 @@ export interface DatabaseSession {
   ): Promise<Result>;
 }
 
+export type RuntimeDatabaseRole = "meraki_app" | "meraki_worker";
+
 /**
  * Establishes authority as transaction-local PostgreSQL settings before any
  * tenant-owned query executes. Request payloads never participate in this step.
  */
 export class PostgresDatabaseSession implements DatabaseSession {
-  public constructor(private readonly pool: TransactionPool) {}
+  public constructor(
+    private readonly pool: TransactionPool,
+    private readonly role: RuntimeDatabaseRole = "meraki_app"
+  ) {
+    if (role !== "meraki_app" && role !== "meraki_worker") {
+      throw new Error("Unsupported runtime database role");
+    }
+  }
 
   public async transaction<Result>(
     context: DatabaseSessionContext,
@@ -44,6 +53,7 @@ export class PostgresDatabaseSession implements DatabaseSession {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      await client.query(`SET LOCAL ROLE ${this.role}`);
       await client.query(
         `SELECT
            set_config('meraki.tenant_id', $1, true),

@@ -2,7 +2,7 @@ name: Gate 0
 
 on:
   push:
-    branches: [main, "gate/**", "agent/**"]
+    branches: [main, "gate/**", "agent/**", "codex/**"]
   pull_request:
   workflow_dispatch:
 
@@ -34,6 +34,9 @@ jobs:
     env:
       CI: "true"
       DATABASE_URL: postgresql://meraki:meraki@127.0.0.1:5432/meraki_test
+      MERAKI_APP_DATABASE_PASSWORD: meraki_ci_app_login_password
+      MERAKI_WORKER_DATABASE_PASSWORD: meraki_ci_worker_login_password
+      MERAKI_DISPOSABLE_DATABASE: "1"
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
