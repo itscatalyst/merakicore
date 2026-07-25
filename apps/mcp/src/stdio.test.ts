@@ -1,17 +1,33 @@
 import { spawn } from "node:child_process";
 import { join } from "node:path";
+import { signTestJwt } from "@meraki/security";
 import { describe, expect, it } from "vitest";
 
 describe("MCP stdio transport", () => {
   it("serves one request and exits cleanly when stdin closes", async () => {
+    const jwt = {
+      secret: new TextEncoder().encode("meraki-stdio-secret-that-is-at-least-32-bytes"),
+      issuer: "https://auth.meraki.test",
+      audience: "meraki-core"
+    } as const;
+    const token = await signTestJwt(
+      {
+        tenant_id: "tenant-a",
+        subject_id: "user-a",
+        actor_id: "user-a",
+        session_id: "stdio-test",
+        scope: ["profile:read", "evidence:write"]
+      },
+      jwt
+    );
     const child = spawn(process.execPath, [join(process.cwd(), "apps/mcp/dist/stdio.js")], {
       cwd: process.cwd(),
       env: {
         ...process.env,
-        MERAKI_TENANT_ID: "tenant-a",
-        MERAKI_SUBJECT_ID: "user-a",
-        MERAKI_ACTOR_ID: "user-a",
-        MERAKI_SESSION_ID: "stdio-test"
+        MERAKI_JWT_SECRET: "meraki-stdio-secret-that-is-at-least-32-bytes",
+        MERAKI_JWT_ISSUER: jwt.issuer,
+        MERAKI_JWT_AUDIENCE: jwt.audience,
+        MERAKI_MCP_TOKEN: token
       },
       stdio: ["pipe", "pipe", "pipe"]
     });

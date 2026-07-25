@@ -1,4 +1,4 @@
-import { MerakiMcpAdapter, type McpRequest } from "./index.js";
+import { buildMcpAdapterFromEnvironment, MerakiMcpAdapter, type McpRequest } from "./index.js";
 import { MERAKI_MCP_TOOLS } from "./index.js";
 
 type JsonRpcEnvelope = McpRequest & {
@@ -19,7 +19,7 @@ const toolDescriptors = MERAKI_MCP_TOOLS.map((name) => ({
 }));
 
 /** Minimal newline-delimited MCP host transport. Stdout is protocol-only; diagnostics stay on stderr. */
-export const runStdioTransport = async (adapter = new MerakiMcpAdapter()): Promise<void> => {
+export const runStdioTransport = async (adapter: MerakiMcpAdapter): Promise<void> => {
   process.stdin.setEncoding("utf8");
   let buffer = "";
   let pending = Promise.resolve();
@@ -82,7 +82,9 @@ export const runStdioTransport = async (adapter = new MerakiMcpAdapter()): Promi
 };
 
 if (process.argv[1] && process.argv[1].endsWith("stdio.js"))
-  void runStdioTransport().catch((error: unknown) => {
-    process.stderr.write(`${error instanceof Error ? error.message : "MCP_TRANSPORT_FAILED"}\n`);
-    process.exitCode = 1;
-  });
+  void buildMcpAdapterFromEnvironment()
+    .then(runStdioTransport)
+    .catch((error: unknown) => {
+      process.stderr.write(`${error instanceof Error ? error.message : "MCP_TRANSPORT_FAILED"}\n`);
+      process.exitCode = 1;
+    });

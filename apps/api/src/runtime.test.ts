@@ -1,9 +1,49 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { FastifyInstance } from "fastify";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { JwtRequestAuthenticator, signTestJwt } from "@meraki/security";
 import { buildPersistentServer, buildServer } from "./index.js";
 import { ConnectedAgentRuntime, evaluateConnectedCausalComparison, JsonConnectedRuntimeStore } from "./runtime.js";
+
+const testAuthority = {
+  tenantId: "tenant-a",
+  subjectId: "user-a",
+  actorId: "user-a",
+  sessionId: "test-session",
+  scopes: new Set(["profile:read", "profile:write", "evidence:write", "evaluation:write"])
+} as const;
+const testServer = (runtime = new ConnectedAgentRuntime()) => buildServer(runtime, testAuthority);
+const persistentTestServer = (path: string) => buildPersistentServer(path, testAuthority);
+const governedLearning = async (server: FastifyInstance, input = correction) => {
+  const recorded = await server.inject({ method: "POST", url: "/v1/corrections", payload: input });
+  const evidence = recorded.json<{ evidence: { eventId: string } }>().evidence;
+  const proposed = await server.inject({
+    method: "POST",
+    url: "/v1/learning/candidates",
+    payload: {
+      event_id: evidence.eventId,
+      claim: `For ${input.taskType}, prefer: ${input.correction}`,
+      facet: "workflow"
+    }
+  });
+  const candidate = proposed.json<{ lesson: { id: string; version: number } }>().lesson;
+  const confirmed = await server.inject({
+    method: "POST",
+    url: `/v1/profile/atoms/${candidate.id}/commands`,
+    payload: {
+      atom_id: candidate.id,
+      expected_version: candidate.version,
+      operation: "confirm"
+    }
+  });
+  const lesson = confirmed.json<{ atom: { id: string; version: number } }>().atom;
+  return {
+    statusCode: confirmed.statusCode === 200 ? 201 : confirmed.statusCode,
+    json: <T>() => ({ evidence, lesson }) as T
+  };
+};
 
 const context = (overrides: Record<string, unknown> = {}) => ({
   contract: "task_context" as const,
@@ -29,7 +69,7 @@ const correction = {
   original: "Draft email",
   correction: "Use a concise subject"
 };
-const server = buildServer();
+const server = testServer();
 
 beforeAll(async () => {
   await server.ready();
@@ -102,7 +142,7 @@ describe("connected agent adapter", () => {
 
   it("rejects REST tenant tampering before evidence or run mutation", async () => {
     const runtime = new ConnectedAgentRuntime();
-    const isolated = buildServer(runtime);
+    const isolated = testServer(runtime);
     await isolated.ready();
     const before = runtime.snapshot();
     const activity = await isolated.inject({
@@ -119,39 +159,62 @@ describe("connected agent adapter", () => {
         scope: correction.scope
       }
     });
-    expect(activity.statusCode).toBe(400);
+    expect(activity.statusCode).toBe(403);
     expect(activity.json<{ error: string }>().error).toBe("identity_mismatch");
     const run = await isolated.inject({
       method: "POST",
       url: "/v1/agent/run",
       payload: { context: { ...context({}), tenant_id: "tenant-attacker" }, request: "Draft", baseline: "BASELINE" }
     });
-    expect(run.statusCode).toBe(400);
+    expect(run.statusCode).toBe(403);
     expect(run.json<{ error: string }>().error).toBe("identity_mismatch");
     expect(runtime.snapshot()).toEqual(before);
     await isolated.close();
   });
 
-  it("rejects identity headers without the server bearer credential", async () => {
-    const token = "0123456789abcdef0123456789abcdef";
-    const isolated = buildServer(new ConnectedAgentRuntime(), undefined, token);
+  it("requires and verifies bearer authority even when NODE_ENV is test", async () => {
+    const jwt = {
+      secret: new TextEncoder().encode("meraki-api-secret-that-is-at-least-32-bytes"),
+      issuer: "https://auth.meraki.test",
+      audience: "meraki-core"
+    } as const;
+    const token = await signTestJwt(
+      {
+        tenant_id: "tenant-a",
+        subject_id: "user-a",
+        actor_id: "user-a",
+        session_id: "api-test",
+        scope: ["profile:read", "profile:write", "evidence:write", "evaluation:write"]
+      },
+      jwt
+    );
+    const runtime = new ConnectedAgentRuntime();
+    const isolated = buildServer(runtime, new JwtRequestAuthenticator(jwt));
     await isolated.ready();
-    const headers = { "x-meraki-tenant-id": "tenant-a", "x-meraki-subject-id": "user-a" };
-    const missing = await isolated.inject({ method: "GET", url: "/v1/profile/atoms", headers });
-    expect(missing.statusCode).toBe(401);
-    expect(missing.json<{ error: string }>().error).toBe("authentication_required");
+    expect((await isolated.inject({ method: "GET", url: "/health" })).statusCode).toBe(200);
+    expect((await isolated.inject({ method: "POST", url: "/v1/corrections", payload: correction })).statusCode).toBe(
+      401
+    );
     const accepted = await isolated.inject({
-      method: "GET",
-      url: "/v1/profile/atoms",
-      headers: { ...headers, authorization: `Bearer ${token}` }
+      method: "POST",
+      url: "/v1/corrections",
+      headers: { authorization: `Bearer ${token}` },
+      payload: correction
     });
-    expect(accepted.statusCode).toBe(200);
+    expect(accepted.statusCode).toBe(201);
+    const mismatch = await isolated.inject({
+      method: "POST",
+      url: "/v1/corrections",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { ...correction, subjectId: "another-user" }
+    });
+    expect(mismatch.statusCode).toBe(403);
     await isolated.close();
   });
 
   it("rejects valid-identity malformed activity without mutating the runtime", async () => {
     const runtime = new ConnectedAgentRuntime();
-    const isolated = buildServer(runtime);
+    const isolated = testServer(runtime);
     await isolated.ready();
     const before = runtime.snapshot();
     const response = await isolated.inject({
@@ -167,14 +230,14 @@ describe("connected agent adapter", () => {
         scope: correction.scope
       }
     });
-    expect(response.statusCode).toBe(400);
+    expect(response.statusCode).toBe(422);
     expect(response.json<{ error: string }>().error).toBe("CONTENT_REQUIRED");
     expect(runtime.snapshot()).toEqual(before);
     await isolated.close();
   });
 
   it("exposes correction and run over REST with immutable evidence and trace", async () => {
-    const response = await server.inject({ method: "POST", url: "/v1/learning", payload: correction });
+    const response = await governedLearning(server);
     expect(response.statusCode).toBe(201);
     const evidence = response.json<{ evidence: { eventId: string } }>().evidence;
     expect(evidence.eventId).toBeTypeOf("string");
@@ -191,9 +254,9 @@ describe("connected agent adapter", () => {
   });
 
   it("exposes the complete immutable learning chain for a selected evidence event", async () => {
-    const isolated = buildServer();
+    const isolated = testServer();
     await isolated.ready();
-    const learned = await isolated.inject({ method: "POST", url: "/v1/learning", payload: correction });
+    const learned = await governedLearning(isolated);
     const eventId = learned.json<{ evidence: { eventId: string } }>().evidence.eventId;
     const trace = await isolated.inject({ method: "GET", url: `/v1/learning/trace/${eventId}` });
     expect(trace.statusCode).toBe(200);
@@ -220,9 +283,9 @@ describe("connected agent adapter", () => {
   });
 
   it("exposes governed profile atoms through the API without a direct write route", async () => {
-    const isolated = buildServer();
+    const isolated = testServer();
     await isolated.ready();
-    const learned = await isolated.inject({ method: "POST", url: "/v1/learning", payload: correction });
+    const learned = await governedLearning(isolated);
     const lesson = learned.json<{ lesson: { id: string; version: number } }>().lesson;
     const listed = await isolated.inject({ method: "GET", url: "/v1/profile/atoms" });
     expect(listed.json<{ items: Array<{ id: string; lifecycle: string }> }>().items).toContainEqual(
@@ -238,7 +301,7 @@ describe("connected agent adapter", () => {
   });
 
   it("runs the canonical Meraki launch-copy learning loop end to end", async () => {
-    const isolated = buildServer();
+    const isolated = testServer();
     await isolated.ready();
     const scope = { level: "project" as const, ref: "Meraki" };
     const mode = "public founder voice";
@@ -435,9 +498,9 @@ describe("connected agent adapter", () => {
   });
 
   it("records connected runs for a read-only trace surface", async () => {
-    const isolated = buildServer();
+    const isolated = testServer();
     await isolated.ready();
-    await isolated.inject({ method: "POST", url: "/v1/learning", payload: correction });
+    await governedLearning(isolated);
     await isolated.inject({
       method: "POST",
       url: "/v1/agent/run",
@@ -451,9 +514,9 @@ describe("connected agent adapter", () => {
   });
 
   it("governs supersession and splitting through versioned profile commands", async () => {
-    const isolated = buildServer();
+    const isolated = testServer();
     await isolated.ready();
-    const learned = await isolated.inject({ method: "POST", url: "/v1/learning", payload: correction });
+    const learned = await governedLearning(isolated);
     const lesson = learned.json<{ lesson: { id: string; version: number } }>().lesson;
     const split = await isolated.inject({
       method: "POST",
@@ -483,9 +546,9 @@ describe("connected agent adapter", () => {
   });
 
   it("weakens only against a canonical same-subject evidence event", async () => {
-    const isolated = buildServer();
+    const isolated = testServer();
     await isolated.ready();
-    const learned = await isolated.inject({ method: "POST", url: "/v1/learning", payload: correction });
+    const learned = await governedLearning(isolated);
     const lesson = learned.json<{ lesson: { id: string; version: number; confidence: number } }>().lesson;
     const counter = await isolated.inject({
       method: "POST",
@@ -520,7 +583,7 @@ describe("connected agent adapter", () => {
   });
 
   it("ingests explicit activities and objective outcomes as immutable source events", async () => {
-    const isolated = buildServer();
+    const isolated = testServer();
     await isolated.ready();
     const activity = await isolated.inject({
       method: "POST",
@@ -570,7 +633,7 @@ describe("connected agent adapter", () => {
   });
 
   it("keeps an activity-derived lesson governed until a canonical approval changes a related run", async () => {
-    const isolated = buildServer();
+    const isolated = testServer();
     await isolated.ready();
     const activity = await isolated.inject({
       method: "POST",
@@ -625,9 +688,9 @@ describe("connected agent adapter", () => {
   });
 
   it("exposes targeted update proposals as governed API resources", async () => {
-    const isolated = buildServer();
+    const isolated = testServer();
     await isolated.ready();
-    const learned = await isolated.inject({ method: "POST", url: "/v1/learning", payload: correction });
+    const learned = await governedLearning(isolated);
     const lesson = learned.json<{ lesson: { id: string } }>().lesson;
     const outcome = await isolated.inject({
       method: "POST",
@@ -676,9 +739,9 @@ describe("connected agent adapter", () => {
   });
 
   it("exposes candidate decisions and evidence provenance through trace lookup", async () => {
-    const isolated = buildServer();
+    const isolated = testServer();
     await isolated.ready();
-    await isolated.inject({ method: "POST", url: "/v1/learning", payload: correction });
+    await governedLearning(isolated);
     const response = await isolated.inject({
       method: "POST",
       url: "/v1/agent/run",
@@ -702,9 +765,9 @@ describe("connected agent adapter", () => {
   });
 
   it("records a traceable evaluator verdict and lets objective evidence outrank a model judge", async () => {
-    const isolated = buildServer();
+    const isolated = testServer();
     await isolated.ready();
-    await isolated.inject({ method: "POST", url: "/v1/learning", payload: correction });
+    await governedLearning(isolated);
     const run = await isolated.inject({
       method: "POST",
       url: "/v1/agent/run",
@@ -786,9 +849,9 @@ describe("connected agent adapter", () => {
     const directory = await mkdtemp(join(tmpdir(), "meraki-api-restart-"));
     try {
       const path = join(directory, "runtime.json");
-      const first = await buildPersistentServer(path);
+      const first = await persistentTestServer(path);
       await first.ready();
-      await first.inject({ method: "POST", url: "/v1/learning", payload: correction });
+      await governedLearning(first);
       const run = await first.inject({
         method: "POST",
         url: "/v1/agent/run",
@@ -809,7 +872,7 @@ describe("connected agent adapter", () => {
         }
       });
       await first.close();
-      const second = await buildPersistentServer(path);
+      const second = await persistentTestServer(path);
       await second.ready();
       expect((await second.inject({ method: "GET", url: `/v1/runs/${runId}` })).statusCode).toBe(200);
       expect(

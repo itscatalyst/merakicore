@@ -1,13 +1,13 @@
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { pathToFileURL } from "node:url";
 import type { ProfileAtom, TaskContext } from "@meraki/contracts";
 import type { ExplicitActivityType } from "@meraki/evidence";
 import {
   assertAuthenticatedIdentity,
-  assertBearerCredential,
-  resolveApiToken,
-  resolveAuthenticatedContext,
-  type AuthenticatedContext
+  requestAuthenticatorFromEnvironment,
+  StaticRequestAuthenticator,
+  type AuthenticatedContext,
+  type RequestAuthenticator
 } from "@meraki/security";
 import {
   ConnectedAgentRuntime,
@@ -91,6 +91,17 @@ const errorCode = (error: unknown, fallback: string): string =>
     : error instanceof Error
       ? error.message
       : fallback;
+const errorStatus = (code: string): number => {
+  if (code === "invalid_token" || code === "missing_token" || code === "malformed_token") return 401;
+  if (code === "identity_mismatch" || code === "insufficient_scope") return 403;
+  if (code.includes("NOT_FOUND")) return 404;
+  if (code.includes("VERSION_CONFLICT") || code.includes("NOT_PENDING") || code.includes("NOT_APPLIED")) return 409;
+  return 422;
+};
+const sendError = (reply: FastifyReply, error: unknown, fallback: string) => {
+  const code = errorCode(error, fallback);
+  return reply.code(errorStatus(code)).send({ error: code });
+};
 const record = (value: unknown, code: string): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(code);
   return value as Record<string, unknown>;
@@ -138,24 +149,41 @@ const validateRun = (value: unknown): void => {
   required(ctx.task_type, "TASK_TYPE_REQUIRED");
   scopeFromUnknown(ctx.scope);
 };
+const assertOwnedAtom = (runtime: ConnectedAgentRuntime, context: AuthenticatedContext, atomId: string): void => {
+  const atom = runtime.profileAtoms().find((candidate) => candidate.id === atomId);
+  if (atom === undefined) throw new Error("ATOM_NOT_FOUND");
+  assertAuthenticatedIdentity(context, {
+    tenantId: atom.tenant_id,
+    subjectId: atom.subject_id
+  });
+};
 
 export const buildServer = (
   runtime = new ConnectedAgentRuntime(),
-  authority: AuthenticatedContext = resolveAuthenticatedContext(),
-  apiToken: string | undefined = resolveApiToken()
+  authentication: RequestAuthenticator | AuthenticatedContext = requestAuthenticatorFromEnvironment()
 ): FastifyInstance => {
-  const server = Fastify({ logger: false });
+  const authenticator =
+    "authenticate" in authentication ? authentication : new StaticRequestAuthenticator(authentication);
+  const requestContexts = new WeakMap<FastifyRequest, AuthenticatedContext>();
+  const contextFor = (request: FastifyRequest): AuthenticatedContext => {
+    const context = requestContexts.get(request);
+    if (context === undefined) throw new Error("AUTHENTICATED_CONTEXT_REQUIRED");
+    return context;
+  };
+  const server = Fastify({
+    logger: process.env.NODE_ENV !== "test",
+    bodyLimit: 1_048_576,
+    requestIdHeader: "x-request-id"
+  });
+  server.get("/health", () => ({
+    status: "ok",
+    service: "meraki-core",
+    contract_version: "0.1.0"
+  }));
   server.addHook("onRequest", async (request, reply) => {
-    if (process.env.NODE_ENV === "test" && apiToken === undefined) return;
+    if (request.url === "/health") return;
     try {
-      if (!apiToken) throw new Error("MERAKI_API_TOKEN_REQUIRED");
-      assertBearerCredential(request.headers.authorization, apiToken);
-      const tenantId = request.headers["x-meraki-tenant-id"];
-      const subjectId = request.headers["x-meraki-subject-id"];
-      assertAuthenticatedIdentity(authority, {
-        tenantId: typeof tenantId === "string" ? tenantId : undefined,
-        subjectId: typeof subjectId === "string" ? subjectId : undefined
-      });
+      requestContexts.set(request, await authenticator.authenticate(request.headers.authorization));
     } catch (error) {
       return reply.code(401).send({ error: errorCode(error, "AUTHENTICATED_CONTEXT_REQUIRED") });
     }
@@ -163,47 +191,62 @@ export const buildServer = (
   server.post<{ Body: CorrectionBody }>("/v1/corrections", async (request, reply) => {
     try {
       validateCorrection(request.body);
-      assertAuthenticatedIdentity(authority, request.body);
-      const evidence = runtime.correction({ ...request.body, scope: scopeFromUnknown(request.body.scope) });
+      const context = contextFor(request);
+      assertAuthenticatedIdentity(context, request.body);
+      const evidence = runtime.correction({
+        ...request.body,
+        tenantId: context.tenantId,
+        subjectId: context.subjectId,
+        actorId: context.actorId,
+        scope: scopeFromUnknown(request.body.scope)
+      });
       return reply.code(201).send({ evidence });
     } catch (error) {
-      return reply.code(400).send({ error: errorCode(error, "INVALID_CORRECTION") });
+      return sendError(reply, error, "INVALID_CORRECTION");
     }
   });
   server.post<{ Body: ActivityBody }>("/v1/activity", async (request, reply) => {
     try {
       validateActivity(request.body);
-      assertAuthenticatedIdentity(authority, request.body);
-      return reply
-        .code(201)
-        .send({ evidence: runtime.activity({ ...request.body, scope: scopeFromUnknown(request.body.scope) }) });
+      const context = contextFor(request);
+      assertAuthenticatedIdentity(context, request.body);
+      return reply.code(201).send({
+        evidence: runtime.activity({
+          ...request.body,
+          tenantId: context.tenantId,
+          subjectId: context.subjectId,
+          actorId: context.actorId,
+          scope: scopeFromUnknown(request.body.scope)
+        })
+      });
     } catch (error) {
-      return reply.code(400).send({ error: errorCode(error, "INVALID_ACTIVITY") });
+      return sendError(reply, error, "INVALID_ACTIVITY");
     }
   });
   server.post<{ Body: OutcomeBody }>("/v1/outcomes", async (request, reply) => {
     try {
       validateOutcome(request.body);
-      assertAuthenticatedIdentity(authority, request.body);
-      return reply
-        .code(201)
-        .send({ evidence: runtime.outcome({ ...request.body, scope: scopeFromUnknown(request.body.scope) }) });
+      const context = contextFor(request);
+      assertAuthenticatedIdentity(context, request.body);
+      return reply.code(201).send({
+        evidence: runtime.outcome({
+          ...request.body,
+          tenantId: context.tenantId,
+          subjectId: context.subjectId,
+          scope: scopeFromUnknown(request.body.scope)
+        })
+      });
     } catch (error) {
-      return reply.code(400).send({ error: errorCode(error, "INVALID_OUTCOME") });
-    }
-  });
-  server.post<{ Body: CorrectionBody }>("/v1/learning", async (request, reply) => {
-    try {
-      validateCorrection(request.body);
-      assertAuthenticatedIdentity(authority, request.body);
-      const receipt = runtime.learn({ ...request.body, scope: scopeFromUnknown(request.body.scope) });
-      return reply.code(201).send(receipt);
-    } catch (error) {
-      return reply.code(400).send({ error: errorCode(error, "INVALID_LEARNING") });
+      return sendError(reply, error, "INVALID_OUTCOME");
     }
   });
   server.post<{ Body: ActivityLessonBody }>("/v1/learning/candidates", async (request, reply) => {
     try {
+      const sourceTrace = runtime.learningTrace(request.body.event_id);
+      assertAuthenticatedIdentity(contextFor(request), {
+        tenantId: sourceTrace.event.tenant_id,
+        subjectId: sourceTrace.event.subject_id
+      });
       return reply.code(201).send({
         lesson: runtime.extractActivityLesson({
           eventId: request.body.event_id,
@@ -213,54 +256,91 @@ export const buildServer = (
         })
       });
     } catch (error) {
-      return reply.code(400).send({ error: errorCode(error, "INVALID_ACTIVITY_LESSON") });
+      return sendError(reply, error, "INVALID_ACTIVITY_LESSON");
     }
   });
   server.post<{ Body: RunBody }>("/v1/agent/run", async (request, reply) => {
     try {
       validateRun(request.body);
-      assertAuthenticatedIdentity(authority, {
+      const context = contextFor(request);
+      assertAuthenticatedIdentity(context, {
         tenantId: request.body.context.tenant_id,
         subjectId: request.body.context.subject_id
       });
       const result = runtime.run({
         ...request.body,
-        context: { ...request.body.context, scope: scopeFromUnknown(request.body.context.scope) }
+        context: {
+          ...request.body.context,
+          tenant_id: context.tenantId,
+          subject_id: context.subjectId,
+          scope: scopeFromUnknown(request.body.context.scope)
+        }
       });
       return reply.send(result);
     } catch (error) {
-      return reply.code(400).send({ error: errorCode(error, "INVALID_RUN") });
+      return sendError(reply, error, "INVALID_RUN");
     }
   });
-  server.get("/v1/profile/atoms", () => ({ items: runtime.profileAtoms() }));
+  server.get("/v1/profile/atoms", (request) => {
+    const context = contextFor(request);
+    return {
+      items: runtime
+        .profileAtoms()
+        .filter((atom) => atom.tenant_id === context.tenantId && atom.subject_id === context.subjectId)
+    };
+  });
   server.get<{ Params: { eventId: string } }>("/v1/learning/trace/:eventId", async (request, reply) => {
     try {
-      return reply.send({ trace: runtime.learningTrace(request.params.eventId) });
+      const trace = runtime.learningTrace(request.params.eventId);
+      assertAuthenticatedIdentity(contextFor(request), {
+        tenantId: trace.event.tenant_id,
+        subjectId: trace.event.subject_id
+      });
+      return reply.send({ trace });
     } catch (error) {
-      return reply.code(404).send({ error: errorCode(error, "LEARNING_TRACE_NOT_FOUND") });
+      return sendError(reply, error, "LEARNING_TRACE_NOT_FOUND");
     }
   });
   server.get<{ Params: { id: string } }>("/v1/profile/atoms/:id/trace", async (request, reply) => {
     try {
-      return reply.send({ trace: runtime.learningTraceForAtom(request.params.id) });
+      const trace = runtime.learningTraceForAtom(request.params.id);
+      assertAuthenticatedIdentity(contextFor(request), {
+        tenantId: trace.event.tenant_id,
+        subjectId: trace.event.subject_id
+      });
+      return reply.send({ trace });
     } catch (error) {
-      return reply.code(404).send({ error: errorCode(error, "ATOM_TRACE_NOT_FOUND") });
+      return sendError(reply, error, "ATOM_TRACE_NOT_FOUND");
     }
   });
-  server.get("/v1/update-proposals", () => ({ items: runtime.updateProposals() }));
+  server.get("/v1/update-proposals", (request) => {
+    const context = contextFor(request);
+    return {
+      items: runtime
+        .updateProposals()
+        .filter((proposal) => proposal.tenant_id === context.tenantId && proposal.subject_id === context.subjectId)
+    };
+  });
   server.post<{ Body: UpdateProposalBody }>("/v1/update-proposals", async (request, reply) => {
     try {
+      assertOwnedAtom(runtime, contextFor(request), request.body.lesson_id);
       return reply.code(201).send({
         proposal: runtime.proposeUpdate(request.body.lesson_id, request.body.evidence_event_id, request.body.operation)
       });
     } catch (error) {
-      return reply.code(400).send({ error: errorCode(error, "INVALID_UPDATE_PROPOSAL") });
+      return sendError(reply, error, "INVALID_UPDATE_PROPOSAL");
     }
   });
   server.post<{ Params: { id: string }; Body: UpdateProposalCommandBody }>(
     "/v1/update-proposals/:id/commands",
     async (request, reply) => {
       try {
+        const proposal = runtime.updateProposals().find((candidate) => candidate.id === request.params.id);
+        if (proposal === undefined) return reply.code(404).send({ error: "UPDATE_PROPOSAL_NOT_FOUND" });
+        assertAuthenticatedIdentity(contextFor(request), {
+          tenantId: proposal.tenant_id,
+          subjectId: proposal.subject_id
+        });
         const result =
           request.body.operation === "approve"
             ? runtime.applyUpdateProposal(request.params.id)
@@ -269,43 +349,83 @@ export const buildServer = (
               : runtime.rollbackUpdateProposal(request.params.id);
         return reply.send(result);
       } catch (error) {
-        return reply.code(400).send({ error: errorCode(error, "INVALID_UPDATE_PROPOSAL_COMMAND") });
+        return sendError(reply, error, "INVALID_UPDATE_PROPOSAL_COMMAND");
       }
     }
   );
-  server.get("/v1/runs", () => ({ items: runtime.recentRuns() }));
-  server.get("/v1/evaluations", () => ({ items: runtime.evaluations() }));
+  server.get("/v1/runs", (request) => {
+    const context = contextFor(request);
+    return {
+      items: runtime
+        .recentRuns()
+        .filter((run) => run.context.tenant_id === context.tenantId && run.context.subject_id === context.subjectId)
+    };
+  });
+  server.get("/v1/evaluations", (request) => {
+    const context = contextFor(request);
+    return {
+      items: runtime
+        .evaluations()
+        .filter(
+          (entry) =>
+            entry.evaluation.tenant_id === context.tenantId && entry.evaluation.subject_id === context.subjectId
+        )
+    };
+  });
   server.post<{ Body: CausalEvaluationBody }>("/v1/evaluations/causal", async (request, reply) => {
     try {
       const input = request.body;
-      assertAuthenticatedIdentity(authority, input.correction);
-      assertAuthenticatedIdentity(authority, {
+      const context = contextFor(request);
+      assertAuthenticatedIdentity(context, input.correction);
+      assertAuthenticatedIdentity(context, {
         tenantId: input.related.context.tenant_id,
         subjectId: input.related.context.subject_id
       });
-      assertAuthenticatedIdentity(authority, {
+      assertAuthenticatedIdentity(context, {
         tenantId: input.unrelated.context.tenant_id,
         subjectId: input.unrelated.context.subject_id
       });
       const report = evaluateConnectedCausalComparison({
         ...(input.experiment_id ? { experimentId: input.experiment_id } : {}),
-        correction: { ...input.correction, scope: scopeFromUnknown(input.correction.scope) },
+        correction: {
+          ...input.correction,
+          tenantId: context.tenantId,
+          subjectId: context.subjectId,
+          actorId: context.actorId,
+          scope: scopeFromUnknown(input.correction.scope)
+        },
         related: {
           ...input.related,
-          context: { ...input.related.context, scope: scopeFromUnknown(input.related.context.scope) }
+          context: {
+            ...input.related.context,
+            tenant_id: context.tenantId,
+            subject_id: context.subjectId,
+            scope: scopeFromUnknown(input.related.context.scope)
+          }
         },
         unrelated: {
           ...input.unrelated,
-          context: { ...input.unrelated.context, scope: scopeFromUnknown(input.unrelated.context.scope) }
+          context: {
+            ...input.unrelated.context,
+            tenant_id: context.tenantId,
+            subject_id: context.subjectId,
+            scope: scopeFromUnknown(input.unrelated.context.scope)
+          }
         }
       });
       return reply.code(201).send({ report });
     } catch (error) {
-      return reply.code(400).send({ error: errorCode(error, "INVALID_CAUSAL_EVALUATION") });
+      return sendError(reply, error, "INVALID_CAUSAL_EVALUATION");
     }
   });
   server.post<{ Body: EvaluationBody }>("/v1/evaluations", async (request, reply) => {
     try {
+      const run = runtime.getRun(request.body.run_id);
+      if (run === undefined) return reply.code(404).send({ error: "RUN_NOT_FOUND" });
+      assertAuthenticatedIdentity(contextFor(request), {
+        tenantId: run.context.tenant_id,
+        subjectId: run.context.subject_id
+      });
       const {
         run_id,
         experiment_id,
@@ -331,17 +451,23 @@ export const buildServer = (
         })
       });
     } catch (error) {
-      return reply.code(400).send({ error: errorCode(error, "INVALID_EVALUATION") });
+      return sendError(reply, error, "INVALID_EVALUATION");
     }
   });
   server.get<{ Params: { runId: string } }>("/v1/runs/:runId", async (request, reply) => {
     const run = runtime.getRun(request.params.runId);
-    return run ? reply.send(run) : reply.code(404).send({ error: "RUN_NOT_FOUND" });
+    if (run === undefined) return reply.code(404).send({ error: "RUN_NOT_FOUND" });
+    assertAuthenticatedIdentity(contextFor(request), {
+      tenantId: run.context.tenant_id,
+      subjectId: run.context.subject_id
+    });
+    return reply.send(run);
   });
   server.post<{ Params: { id: string }; Body: AtomCommandBody }>(
     "/v1/profile/atoms/:id/commands",
     async (request, reply) => {
       try {
+        assertOwnedAtom(runtime, contextFor(request), request.params.id);
         const { operation, expected_version, claim, mode } = request.body;
         if (request.body.atom_id !== request.params.id) throw new Error("ATOM_ID_MISMATCH");
         if (operation === "split")
@@ -367,7 +493,7 @@ export const buildServer = (
                       );
         return reply.send({ atom });
       } catch (error) {
-        return reply.code(400).send({ error: errorCode(error, "INVALID_ATOM_COMMAND") });
+        return sendError(reply, error, "INVALID_ATOM_COMMAND");
       }
     }
   );
@@ -375,10 +501,13 @@ export const buildServer = (
 };
 
 /** Loads and atomically saves the local runtime adapter when Fastify closes. */
-export const buildPersistentServer = async (path: string): Promise<FastifyInstance> => {
+export const buildPersistentServer = async (
+  path: string,
+  authentication: RequestAuthenticator | AuthenticatedContext = requestAuthenticatorFromEnvironment()
+): Promise<FastifyInstance> => {
   const store = new JsonConnectedRuntimeStore(path);
   const runtime = await store.load();
-  const server = buildServer(runtime);
+  const server = buildServer(runtime, authentication);
   server.addHook("onClose", async () => {
     await store.save(runtime);
   });

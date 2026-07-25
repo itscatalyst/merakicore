@@ -1,6 +1,10 @@
 import type { TaskContext } from "@meraki/contracts";
 import { ConnectedAgentRuntime } from "@meraki/api";
-import { assertAuthenticatedIdentity, resolveAuthenticatedContext, type AuthenticatedContext } from "@meraki/security";
+import {
+  assertAuthenticatedIdentity,
+  requestAuthenticatorFromEnvironment,
+  type AuthenticatedContext
+} from "@meraki/security";
 
 export const MERAKI_MCP_TOOLS = [
   "meraki_get_guidance",
@@ -29,7 +33,7 @@ const context = (value: unknown): TaskContext => {
   if (
     !scope ||
     typeof scope !== "object" ||
-    !["global", "tenant", "project", "task"].includes(scope.level) ||
+    !["run", "task", "project", "mode", "domain", "workspace", "relationship", "user", "team"].includes(scope.level) ||
     (scope.ref !== undefined && typeof scope.ref !== "string")
   )
     throw new Error("SCOPE_INVALID");
@@ -72,8 +76,8 @@ const outcome = (value: unknown) => {
 /** Typed MCP-facing adapter. It exposes retrieval and evidence/outcome ingestion only; profile writes remain governed by Studio/API commands. */
 export class MerakiMcpAdapter {
   constructor(
-    private readonly runtime = new ConnectedAgentRuntime(),
-    private readonly authority: AuthenticatedContext = resolveAuthenticatedContext()
+    private readonly runtime: ConnectedAgentRuntime,
+    private readonly authority: AuthenticatedContext
   ) {}
 
   handle(request: McpRequest): Promise<McpResponse> {
@@ -146,4 +150,11 @@ export class MerakiMcpAdapter {
       };
     }
   }
+}
+
+export async function buildMcpAdapterFromEnvironment(): Promise<MerakiMcpAdapter> {
+  const token = process.env.MERAKI_MCP_TOKEN;
+  if (!token) throw new Error("MERAKI_MCP_TOKEN is required");
+  const authority = await requestAuthenticatorFromEnvironment().authenticate(`Bearer ${token}`);
+  return new MerakiMcpAdapter(new ConnectedAgentRuntime(), authority);
 }
