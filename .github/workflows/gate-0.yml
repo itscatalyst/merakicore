@@ -60,9 +60,10 @@ jobs:
         run: |
           pnpm orchestration:validate
           pnpm proof:validate -- ops/proof/G0-manifest.yaml
-      - name: Typecheck, lint, and unit test
+      - name: Typecheck, format, lint, and unit test
         run: |
           pnpm typecheck
+          pnpm format:check
           pnpm lint
           pnpm test
       - name: Check generated contract drift

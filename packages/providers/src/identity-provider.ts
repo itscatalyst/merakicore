@@ -16,9 +16,7 @@ export interface IdentityProvider {
 }
 
 export class StaticIdentityProvider implements IdentityProvider {
-  public constructor(
-    private readonly identities: ReadonlyMap<string, IdentityResolution>
-  ) {}
+  public constructor(private readonly identities: ReadonlyMap<string, IdentityResolution>) {}
 
   public resolve(token: IdentityToken): Promise<IdentityResolution | null> {
     return Promise.resolve(this.identities.get(`${token.scheme}:${token.credential}`) ?? null);

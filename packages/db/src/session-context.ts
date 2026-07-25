@@ -51,13 +51,7 @@ export class PostgresDatabaseSession implements DatabaseSession {
            set_config('meraki.actor_id', $3, true),
            set_config('meraki.session_id', $4, true),
            set_config('meraki.scopes', $5, true)`,
-        [
-          context.tenantId,
-          context.subjectId,
-          context.actorId,
-          context.sessionId,
-          JSON.stringify([...context.scopes])
-        ]
+        [context.tenantId, context.subjectId, context.actorId, context.sessionId, JSON.stringify([...context.scopes])]
       );
       const result = await operation(client);
       await client.query("COMMIT");

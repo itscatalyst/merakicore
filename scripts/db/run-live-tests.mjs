@@ -8,9 +8,7 @@ if (!process.env.DATABASE_URL) {
   process.exit(2);
 }
 
-const vitest = process.platform === "win32"
-  ? "node_modules\\.bin\\vitest.cmd"
-  : "node_modules/.bin/vitest";
+const vitest = process.platform === "win32" ? "node_modules\\.bin\\vitest.cmd" : "node_modules/.bin/vitest";
 const result = spawnSync(
   vitest,
   ["run", "packages/db/src/live-postgres.test.ts", "--pool=threads", "--maxWorkers=1", "--reporter=verbose"],

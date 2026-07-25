@@ -1,6 +1,23 @@
 import { MerakiMcpAdapter, type McpRequest } from "./index.js";
 import { MERAKI_MCP_TOOLS } from "./index.js";
 
+type JsonRpcEnvelope = McpRequest & {
+  jsonrpc?: string;
+  id?: string | number;
+  method?: string;
+  params?: { name?: string; arguments?: Record<string, unknown> };
+};
+
+const SERVER_INFO = { protocolVersion: "2024-11-05", capabilities: { tools: {} } } as const;
+const emit = (payload: unknown): void => {
+  process.stdout.write(`${JSON.stringify(payload)}\n`);
+};
+const toolDescriptors = MERAKI_MCP_TOOLS.map((name) => ({
+  name,
+  description: `Meraki Core ${name}`,
+  inputSchema: { type: "object" }
+}));
+
 /** Minimal newline-delimited MCP host transport. Stdout is protocol-only; diagnostics stay on stderr. */
 export const runStdioTransport = async (adapter = new MerakiMcpAdapter()): Promise<void> => {
   process.stdin.setEncoding("utf8");
@@ -10,20 +27,30 @@ export const runStdioTransport = async (adapter = new MerakiMcpAdapter()): Promi
     if (!line.trim()) return;
     try {
       const request = JSON.parse(line) as McpRequest;
-      const rpc = request as McpRequest & { jsonrpc?: string; id?: string | number; method?: string; params?: { name?: string; arguments?: Record<string, unknown> } };
-      if (rpc.jsonrpc === "2.0" && rpc.method === "initialize") {
-        process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: rpc.id, result: { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "meraki-core", version: "0.0.0" } } })}\n`);
-      } else if (rpc.jsonrpc === "2.0" && rpc.method === "tools/list") {
-        process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: rpc.id, result: { tools: MERAKI_MCP_TOOLS.map((name) => ({ name, description: `Meraki Core ${name}`, inputSchema: { type: "object" } })) } })}\n`);
-      } else if (rpc.jsonrpc === "2.0" && rpc.method === "tools/call") {
-        const response = await adapter.handle({ name: rpc.params?.name as McpRequest["name"], arguments: rpc.params?.arguments ?? {} });
-        process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: rpc.id, result: response })}\n`);
+      const rpc = request as JsonRpcEnvelope;
+      const isRpc = rpc.jsonrpc === "2.0";
+      if (isRpc && rpc.method === "initialize") {
+        emit({
+          jsonrpc: "2.0",
+          id: rpc.id,
+          result: { ...SERVER_INFO, serverInfo: { name: "meraki-core", version: "0.0.0" } }
+        });
+      } else if (isRpc && rpc.method === "tools/list") {
+        emit({ jsonrpc: "2.0", id: rpc.id, result: { tools: toolDescriptors } });
+      } else if (isRpc && rpc.method === "tools/call") {
+        const response = await adapter.handle({
+          name: rpc.params?.name as McpRequest["name"],
+          arguments: rpc.params?.arguments ?? {}
+        });
+        emit({ jsonrpc: "2.0", id: rpc.id, result: response });
       } else {
-        const response = await adapter.handle(request);
-        process.stdout.write(`${JSON.stringify(response)}\n`);
+        emit(await adapter.handle(request));
       }
     } catch (error) {
-      process.stdout.write(`${JSON.stringify({ isError: true, content: { code: error instanceof Error ? error.message : "MCP_PROTOCOL_REQUEST_FAILED" } })}\n`);
+      emit({
+        isError: true,
+        content: { code: error instanceof Error ? error.message : "MCP_PROTOCOL_REQUEST_FAILED" }
+      });
     }
   };
   process.stdin.on("data", (chunk: string) => {
@@ -50,4 +77,8 @@ export const runStdioTransport = async (adapter = new MerakiMcpAdapter()): Promi
   await pending;
 };
 
-if (process.argv[1] && process.argv[1].endsWith("stdio.js")) void runStdioTransport().catch((error: unknown) => { process.stderr.write(`${error instanceof Error ? error.message : "MCP_TRANSPORT_FAILED"}\n`); process.exitCode = 1; });
+if (process.argv[1] && process.argv[1].endsWith("stdio.js"))
+  void runStdioTransport().catch((error: unknown) => {
+    process.stderr.write(`${error instanceof Error ? error.message : "MCP_TRANSPORT_FAILED"}\n`);
+    process.exitCode = 1;
+  });

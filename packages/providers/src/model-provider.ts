@@ -26,9 +26,7 @@ export class DeterministicModelProvider implements ModelProvider {
   public complete(request: ModelRequest): Promise<ModelCompletion> {
     if (request.signal?.aborted === true) {
       return Promise.reject(
-        request.signal.reason instanceof Error
-          ? request.signal.reason
-          : new Error("Model request aborted")
+        request.signal.reason instanceof Error ? request.signal.reason : new Error("Model request aborted")
       );
     }
     const output = this.respond(request.input);

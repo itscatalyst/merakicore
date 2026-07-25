@@ -5,8 +5,30 @@ import { join } from "node:path";
 import { buildPersistentServer, buildServer } from "./index.js";
 import { ConnectedAgentRuntime, evaluateConnectedCausalComparison, JsonConnectedRuntimeStore } from "./runtime.js";
 
-const context = (overrides: Record<string, unknown> = {}) => ({ contract: "task_context" as const, tenant_id: "tenant-a", subject_id: "user-a", task_id: "task-1", task_type: "email", scope: { level: "project" as const, ref: "acme" }, mode: "concise", constraints: [], permissions: [], token_budget: 1000, ...overrides });
-const correction = { tenantId: "tenant-a", subjectId: "user-a", actorId: "user-a", runId: "run-a", taskType: "email", scope: { level: "project" as const, ref: "acme" }, mode: "concise", original: "Draft email", correction: "Use a concise subject" };
+const context = (overrides: Record<string, unknown> = {}) => ({
+  contract: "task_context" as const,
+  tenant_id: "tenant-a",
+  subject_id: "user-a",
+  task_id: "task-1",
+  task_type: "email",
+  scope: { level: "project" as const, ref: "acme" },
+  mode: "concise",
+  constraints: [],
+  permissions: [],
+  token_budget: 1000,
+  ...overrides
+});
+const correction = {
+  tenantId: "tenant-a",
+  subjectId: "user-a",
+  actorId: "user-a",
+  runId: "run-a",
+  taskType: "email",
+  scope: { level: "project" as const, ref: "acme" },
+  mode: "concise",
+  original: "Draft email",
+  correction: "Use a concise subject"
+};
 const server = buildServer();
 
 beforeAll(async () => {
@@ -31,7 +53,12 @@ describe("connected agent adapter", () => {
   });
 
   it("compares actual connected baseline, raw-memory, Meraki, and targeted-ablation arms", () => {
-    const report = evaluateConnectedCausalComparison({ correction, related: { context: context(), request: "Draft", baseline: "BASELINE" }, unrelated: { context: context({ mode: "creative" }), request: "Draft", baseline: "BASELINE" }, experimentId: "connected-causal-proof" });
+    const report = evaluateConnectedCausalComparison({
+      correction,
+      related: { context: context(), request: "Draft", baseline: "BASELINE" },
+      unrelated: { context: context({ mode: "creative" }), request: "Draft", baseline: "BASELINE" },
+      experimentId: "connected-causal-proof"
+    });
     expect(report.arms.rawMemory.tokenCount).toBe(report.arms.merakiPack.tokenCount);
     expect(report.relatedImproves).toBe(true);
     expect(report.unrelatedUnaffected).toBe(true);
@@ -45,9 +72,32 @@ describe("connected agent adapter", () => {
   });
 
   it("exposes the connected causal proof through the canonical API", async () => {
-    const response = await server.inject({ method: "POST", url: "/v1/evaluations/causal", payload: { experiment_id: "api-causal-proof", correction, related: { context: context(), request: "Draft", baseline: "BASELINE" }, unrelated: { context: context({ mode: "creative" }), request: "Draft", baseline: "BASELINE" } } });
+    const response = await server.inject({
+      method: "POST",
+      url: "/v1/evaluations/causal",
+      payload: {
+        experiment_id: "api-causal-proof",
+        correction,
+        related: { context: context(), request: "Draft", baseline: "BASELINE" },
+        unrelated: { context: context({ mode: "creative" }), request: "Draft", baseline: "BASELINE" }
+      }
+    });
     expect(response.statusCode).toBe(201);
-    expect(response.json<{ report: { relatedImproves: boolean; unrelatedUnaffected: boolean; targetedAblationRemovesImprovement: boolean; correctionBurden: Record<string, number> } }>().report).toMatchObject({ relatedImproves: true, unrelatedUnaffected: true, targetedAblationRemovesImprovement: true, correctionBurden: { baseline: 1, rawMemory: 1, merakiPack: 0, ablatedPack: 1 } });
+    expect(
+      response.json<{
+        report: {
+          relatedImproves: boolean;
+          unrelatedUnaffected: boolean;
+          targetedAblationRemovesImprovement: boolean;
+          correctionBurden: Record<string, number>;
+        };
+      }>().report
+    ).toMatchObject({
+      relatedImproves: true,
+      unrelatedUnaffected: true,
+      targetedAblationRemovesImprovement: true,
+      correctionBurden: { baseline: 1, rawMemory: 1, merakiPack: 0, ablatedPack: 1 }
+    });
   });
 
   it("rejects REST tenant tampering before evidence or run mutation", async () => {
@@ -55,10 +105,27 @@ describe("connected agent adapter", () => {
     const isolated = buildServer(runtime);
     await isolated.ready();
     const before = runtime.snapshot();
-    const activity = await isolated.inject({ method: "POST", url: "/v1/activity", payload: { tenantId: "tenant-attacker", subjectId: "user-a", actorId: "user-a", runId: "attack", taskType: "email", activityType: "approval", content: "approved", scope: correction.scope } });
+    const activity = await isolated.inject({
+      method: "POST",
+      url: "/v1/activity",
+      payload: {
+        tenantId: "tenant-attacker",
+        subjectId: "user-a",
+        actorId: "user-a",
+        runId: "attack",
+        taskType: "email",
+        activityType: "approval",
+        content: "approved",
+        scope: correction.scope
+      }
+    });
     expect(activity.statusCode).toBe(400);
     expect(activity.json<{ error: string }>().error).toBe("identity_mismatch");
-    const run = await isolated.inject({ method: "POST", url: "/v1/agent/run", payload: { context: { ...context({}), tenant_id: "tenant-attacker" }, request: "Draft", baseline: "BASELINE" } });
+    const run = await isolated.inject({
+      method: "POST",
+      url: "/v1/agent/run",
+      payload: { context: { ...context({}), tenant_id: "tenant-attacker" }, request: "Draft", baseline: "BASELINE" }
+    });
     expect(run.statusCode).toBe(400);
     expect(run.json<{ error: string }>().error).toBe("identity_mismatch");
     expect(runtime.snapshot()).toEqual(before);
@@ -70,7 +137,19 @@ describe("connected agent adapter", () => {
     const isolated = buildServer(runtime);
     await isolated.ready();
     const before = runtime.snapshot();
-    const response = await isolated.inject({ method: "POST", url: "/v1/activity", payload: { tenantId: "tenant-a", subjectId: "user-a", actorId: "user-a", runId: "malformed", taskType: "email", activityType: "approval", scope: correction.scope } });
+    const response = await isolated.inject({
+      method: "POST",
+      url: "/v1/activity",
+      payload: {
+        tenantId: "tenant-a",
+        subjectId: "user-a",
+        actorId: "user-a",
+        runId: "malformed",
+        taskType: "email",
+        activityType: "approval",
+        scope: correction.scope
+      }
+    });
     expect(response.statusCode).toBe(400);
     expect(response.json<{ error: string }>().error).toBe("CONTENT_REQUIRED");
     expect(runtime.snapshot()).toEqual(before);
@@ -82,9 +161,15 @@ describe("connected agent adapter", () => {
     expect(response.statusCode).toBe(201);
     const evidence = response.json<{ evidence: { eventId: string } }>().evidence;
     expect(evidence.eventId).toBeTypeOf("string");
-    const runResponse = await server.inject({ method: "POST", url: "/v1/agent/run", payload: { context: context(), request: "Draft", baseline: "BASELINE" } });
+    const runResponse = await server.inject({
+      method: "POST",
+      url: "/v1/agent/run",
+      payload: { context: context(), request: "Draft", baseline: "BASELINE" }
+    });
     expect(runResponse.statusCode).toBe(200);
-    expect(runResponse.json<{ output: string; trace: { changed: boolean } }>().output).toContain("Meraki guidance applied");
+    expect(runResponse.json<{ output: string; trace: { changed: boolean } }>().output).toContain(
+      "Meraki guidance applied"
+    );
     expect(runResponse.json<{ output: string; trace: { changed: boolean } }>().trace.changed).toBe(true);
   });
 
@@ -95,7 +180,25 @@ describe("connected agent adapter", () => {
     const eventId = learned.json<{ evidence: { eventId: string } }>().evidence.eventId;
     const trace = await isolated.inject({ method: "GET", url: `/v1/learning/trace/${eventId}` });
     expect(trace.statusCode).toBe(200);
-    expect(trace.json<{ trace: { source: { trust_class: string }; event: { id: string }; observation?: { id: string }; signal?: { id: string }; hypothesis?: { id: string }; atom?: { lifecycle: string } } }>().trace).toMatchObject({ source: { trust_class: "explicit_user" }, event: { id: eventId }, observation: { id: expect.any(String) }, signal: { id: expect.any(String) }, hypothesis: { id: expect.any(String) }, atom: { lifecycle: "active" } });
+    expect(
+      trace.json<{
+        trace: {
+          source: { trust_class: string };
+          event: { id: string };
+          observation?: { id: string };
+          signal?: { id: string };
+          hypothesis?: { id: string };
+          atom?: { lifecycle: string };
+        };
+      }>().trace
+    ).toMatchObject({
+      source: { trust_class: "explicit_user" },
+      event: { id: eventId },
+      observation: { id: expect.any(String) },
+      signal: { id: expect.any(String) },
+      hypothesis: { id: expect.any(String) },
+      atom: { lifecycle: "active" }
+    });
     await isolated.close();
   });
 
@@ -105,8 +208,14 @@ describe("connected agent adapter", () => {
     const learned = await isolated.inject({ method: "POST", url: "/v1/learning", payload: correction });
     const lesson = learned.json<{ lesson: { id: string; version: number } }>().lesson;
     const listed = await isolated.inject({ method: "GET", url: "/v1/profile/atoms" });
-    expect(listed.json<{ items: Array<{ id: string; lifecycle: string }> }>().items).toContainEqual(expect.objectContaining({ id: lesson.id, lifecycle: "active" }));
-    const revoked = await isolated.inject({ method: "POST", url: `/v1/profile/atoms/${lesson.id}/commands`, payload: { atom_id: lesson.id, expected_version: lesson.version, operation: "revoke" } });
+    expect(listed.json<{ items: Array<{ id: string; lifecycle: string }> }>().items).toContainEqual(
+      expect.objectContaining({ id: lesson.id, lifecycle: "active" })
+    );
+    const revoked = await isolated.inject({
+      method: "POST",
+      url: `/v1/profile/atoms/${lesson.id}/commands`,
+      payload: { atom_id: lesson.id, expected_version: lesson.version, operation: "revoke" }
+    });
     expect(revoked.json<{ atom: { lifecycle: string } }>().atom.lifecycle).toBe("revoked");
     await isolated.close();
   });
@@ -117,55 +226,194 @@ describe("connected agent adapter", () => {
     const scope = { level: "project" as const, ref: "Meraki" };
     const mode = "public founder voice";
     const baseline = "Generic, vague, corporate Meraki launch copy.";
-    const correctionBody = { tenantId: "tenant-a", subjectId: "user-a", actorId: "user-a", runId: "launch-correction", taskType: "product writing", scope, mode, original: baseline, correction: "Stop opening with vague claims. Lead with the concrete problem and mechanism." };
-    const expectedClaim = "Lead Meraki product writing with the concrete problem and mechanism. Avoid unsupported promotional openings.";
-    const correctionResponse = await isolated.inject({ method: "POST", url: "/v1/corrections", payload: correctionBody });
+    const correctionBody = {
+      tenantId: "tenant-a",
+      subjectId: "user-a",
+      actorId: "user-a",
+      runId: "launch-correction",
+      taskType: "product writing",
+      scope,
+      mode,
+      original: baseline,
+      correction: "Stop opening with vague claims. Lead with the concrete problem and mechanism."
+    };
+    const expectedClaim =
+      "Lead Meraki product writing with the concrete problem and mechanism. Avoid unsupported promotional openings.";
+    const correctionResponse = await isolated.inject({
+      method: "POST",
+      url: "/v1/corrections",
+      payload: correctionBody
+    });
     const eventId = correctionResponse.json<{ evidence: { eventId: string } }>().evidence.eventId;
     expect(correctionResponse.statusCode).toBe(201);
-    const candidateResponse = await isolated.inject({ method: "POST", url: "/v1/learning/candidates", payload: { event_id: eventId, claim: expectedClaim, facet: "judgment.copy" } });
-    const candidate = candidateResponse.json<{ lesson: { id: string; version: number; lifecycle: string; facet: string } }>().lesson;
+    const candidateResponse = await isolated.inject({
+      method: "POST",
+      url: "/v1/learning/candidates",
+      payload: { event_id: eventId, claim: expectedClaim, facet: "judgment.copy" }
+    });
+    const candidate = candidateResponse.json<{
+      lesson: { id: string; version: number; lifecycle: string; facet: string };
+    }>().lesson;
     expect(candidateResponse.statusCode).toBe(201);
     expect(candidate).toMatchObject({ lifecycle: "candidate", facet: "judgment.copy" });
-    const edited = await isolated.inject({ method: "POST", url: `/v1/profile/atoms/${candidate.id}/commands`, payload: { atom_id: candidate.id, expected_version: candidate.version, operation: "edit", claim: expectedClaim } });
+    const edited = await isolated.inject({
+      method: "POST",
+      url: `/v1/profile/atoms/${candidate.id}/commands`,
+      payload: { atom_id: candidate.id, expected_version: candidate.version, operation: "edit", claim: expectedClaim }
+    });
     const editedAtom = edited.json<{ atom: { id: string; version: number } }>().atom;
-    const rescoped = await isolated.inject({ method: "POST", url: `/v1/profile/atoms/${candidate.id}/commands`, payload: { atom_id: candidate.id, expected_version: editedAtom.version, operation: "rescope", scope, mode } });
-    const rescopedAtom = rescoped.json<{ atom: { id: string; version: number; scope: typeof scope; mode?: string } }>().atom;
+    const rescoped = await isolated.inject({
+      method: "POST",
+      url: `/v1/profile/atoms/${candidate.id}/commands`,
+      payload: { atom_id: candidate.id, expected_version: editedAtom.version, operation: "rescope", scope, mode }
+    });
+    const rescopedAtom = rescoped.json<{ atom: { id: string; version: number; scope: typeof scope; mode?: string } }>()
+      .atom;
     expect(rescopedAtom).toMatchObject({ scope, mode });
-    const approved = await isolated.inject({ method: "POST", url: `/v1/profile/atoms/${candidate.id}/commands`, payload: { atom_id: candidate.id, expected_version: rescopedAtom.version, operation: "confirm" } });
+    const approved = await isolated.inject({
+      method: "POST",
+      url: `/v1/profile/atoms/${candidate.id}/commands`,
+      payload: { atom_id: candidate.id, expected_version: rescopedAtom.version, operation: "confirm" }
+    });
     const active = approved.json<{ atom: { id: string; version: number; lifecycle: string } }>().atom;
     expect(active).toMatchObject({ id: candidate.id, lifecycle: "active" });
-    const relatedContext = { contract: "task_context" as const, tenant_id: "tenant-a", subject_id: "user-a", task_id: "launch-related", task_type: "product writing", scope, mode, constraints: [], permissions: [], token_budget: 1000 };
+    const relatedContext = {
+      contract: "task_context" as const,
+      tenant_id: "tenant-a",
+      subject_id: "user-a",
+      task_id: "launch-related",
+      task_type: "product writing",
+      scope,
+      mode,
+      constraints: [],
+      permissions: [],
+      token_budget: 1000
+    };
     const codingContext = { ...relatedContext, task_id: "coding-negative", task_type: "coding", mode: "engineering" };
     const emailContext = { ...relatedContext, task_id: "email-negative", task_type: "client email", mode: "formal" };
-    const run = async (context: typeof relatedContext) => isolated.inject({ method: "POST", url: "/v1/agent/run", payload: { context, request: "Write the next version", baseline } });
+    const run = async (context: typeof relatedContext) =>
+      isolated.inject({
+        method: "POST",
+        url: "/v1/agent/run",
+        payload: { context, request: "Write the next version", baseline }
+      });
     const related = await run(relatedContext);
     const coding = await run(codingContext);
     const email = await run(emailContext);
-    const relatedResult = related.json<{ output: string; trace: { runId: string; changed: boolean; packHash: string } }>();
+    const relatedResult = related.json<{
+      output: string;
+      trace: { runId: string; changed: boolean; packHash: string };
+    }>();
     expect(relatedResult).toMatchObject({ trace: { changed: true }, output: expect.stringContaining(expectedClaim) });
-    expect(coding.json<{ output: string; trace: { changed: boolean } }>()).toMatchObject({ output: baseline, trace: { changed: false } });
-    expect(email.json<{ output: string; trace: { changed: boolean } }>()).toMatchObject({ output: baseline, trace: { changed: false } });
+    expect(coding.json<{ output: string; trace: { changed: boolean } }>()).toMatchObject({
+      output: baseline,
+      trace: { changed: false }
+    });
+    expect(email.json<{ output: string; trace: { changed: boolean } }>()).toMatchObject({
+      output: baseline,
+      trace: { changed: false }
+    });
     const trace = await isolated.inject({ method: "GET", url: `/v1/profile/atoms/${candidate.id}/trace` });
-    expect(trace.json<{ trace: { source: { trust_class: string }; event: { id: string }; observation?: unknown; signal?: unknown; hypothesis?: unknown; atom?: { facet: string; scope: typeof scope; mode?: string } } }>().trace).toMatchObject({ source: { trust_class: "explicit_user" }, event: { id: eventId }, observation: expect.any(Object), signal: expect.any(Object), hypothesis: expect.any(Object), atom: { facet: "judgment.copy", scope, mode } });
-    const feedback = await isolated.inject({ method: "POST", url: "/v1/activity", payload: { tenantId: "tenant-a", subjectId: "user-a", actorId: "user-a", runId: relatedResult.trace.packHash, taskType: "product writing", activityType: "approval", content: "Accepted the concrete problem and mechanism opening", scope, mode } });
-    expect(feedback.json<{ evidence: { source: { trust_class: string } } }>().evidence.source.trust_class).toBe("explicit_user");
-    const outcome = await isolated.inject({ method: "POST", url: "/v1/outcomes", payload: { tenantId: "tenant-a", subjectId: "user-a", runId: relatedResult.trace.packHash, outcomeType: "accepted", outcome: { accepted: true }, scope, mode } });
-    const outcomeEventId = outcome.json<{ evidence: { event: { id: string }; source: { trust_class: string } } }>().evidence.event.id;
-    expect(outcome.json<{ evidence: { source: { trust_class: string } } }>().evidence.source.trust_class).toBe("objective_outcome");
-    const evaluation = await isolated.inject({ method: "POST", url: "/v1/evaluations", payload: { run_id: relatedResult.trace.runId, experiment_id: "launch-loop", arm_id: "meraki_pack", evaluator_class: "objective", criteria: { accepted: true }, result: "win", uncertainty: 0 } });
+    expect(
+      trace.json<{
+        trace: {
+          source: { trust_class: string };
+          event: { id: string };
+          observation?: unknown;
+          signal?: unknown;
+          hypothesis?: unknown;
+          atom?: { facet: string; scope: typeof scope; mode?: string };
+        };
+      }>().trace
+    ).toMatchObject({
+      source: { trust_class: "explicit_user" },
+      event: { id: eventId },
+      observation: expect.any(Object),
+      signal: expect.any(Object),
+      hypothesis: expect.any(Object),
+      atom: { facet: "judgment.copy", scope, mode }
+    });
+    const feedback = await isolated.inject({
+      method: "POST",
+      url: "/v1/activity",
+      payload: {
+        tenantId: "tenant-a",
+        subjectId: "user-a",
+        actorId: "user-a",
+        runId: relatedResult.trace.packHash,
+        taskType: "product writing",
+        activityType: "approval",
+        content: "Accepted the concrete problem and mechanism opening",
+        scope,
+        mode
+      }
+    });
+    expect(feedback.json<{ evidence: { source: { trust_class: string } } }>().evidence.source.trust_class).toBe(
+      "explicit_user"
+    );
+    const outcome = await isolated.inject({
+      method: "POST",
+      url: "/v1/outcomes",
+      payload: {
+        tenantId: "tenant-a",
+        subjectId: "user-a",
+        runId: relatedResult.trace.packHash,
+        outcomeType: "accepted",
+        outcome: { accepted: true },
+        scope,
+        mode
+      }
+    });
+    const outcomeEventId = outcome.json<{ evidence: { event: { id: string }; source: { trust_class: string } } }>()
+      .evidence.event.id;
+    expect(outcome.json<{ evidence: { source: { trust_class: string } } }>().evidence.source.trust_class).toBe(
+      "objective_outcome"
+    );
+    const evaluation = await isolated.inject({
+      method: "POST",
+      url: "/v1/evaluations",
+      payload: {
+        run_id: relatedResult.trace.runId,
+        experiment_id: "launch-loop",
+        arm_id: "meraki_pack",
+        evaluator_class: "objective",
+        criteria: { accepted: true },
+        result: "win",
+        uncertainty: 0
+      }
+    });
     expect(evaluation.statusCode).toBe(201);
-    const proposalResponse = await isolated.inject({ method: "POST", url: "/v1/update-proposals", payload: { lesson_id: candidate.id, evidence_event_id: outcomeEventId, operation: "reinforce" } });
+    const proposalResponse = await isolated.inject({
+      method: "POST",
+      url: "/v1/update-proposals",
+      payload: { lesson_id: candidate.id, evidence_event_id: outcomeEventId, operation: "reinforce" }
+    });
     const proposal = proposalResponse.json<{ proposal: { id: string } }>().proposal;
-    const applied = await isolated.inject({ method: "POST", url: `/v1/update-proposals/${proposal.id}/commands`, payload: { operation: "approve" } });
+    const applied = await isolated.inject({
+      method: "POST",
+      url: `/v1/update-proposals/${proposal.id}/commands`,
+      payload: { operation: "approve" }
+    });
     expect(applied.json<{ proposal: { status: string }; atom: { utility: number } }>().proposal.status).toBe("applied");
     const later = await run({ ...relatedContext, task_id: "launch-related-later" });
     const laterResult = later.json<{ output: string; trace: { changed: boolean; packHash: string } }>();
     expect(laterResult).toMatchObject({ trace: { changed: true }, output: expect.stringContaining(expectedClaim) });
     expect(laterResult.trace.packHash).not.toBe(relatedResult.trace.packHash);
-    const revoked = await isolated.inject({ method: "POST", url: `/v1/profile/atoms/${candidate.id}/commands`, payload: { atom_id: candidate.id, expected_version: applied.json<{ atom: { version: number } }>().atom.version, operation: "revoke" } });
+    const revoked = await isolated.inject({
+      method: "POST",
+      url: `/v1/profile/atoms/${candidate.id}/commands`,
+      payload: {
+        atom_id: candidate.id,
+        expected_version: applied.json<{ atom: { version: number } }>().atom.version,
+        operation: "revoke"
+      }
+    });
     expect(revoked.json<{ atom: { lifecycle: string } }>().atom.lifecycle).toBe("revoked");
     const afterRevoke = await run({ ...relatedContext, task_id: "launch-related-revoked" });
-    expect(afterRevoke.json<{ output: string; trace: { changed: boolean } }>()).toMatchObject({ output: baseline, trace: { changed: false } });
+    expect(afterRevoke.json<{ output: string; trace: { changed: boolean } }>()).toMatchObject({
+      output: baseline,
+      trace: { changed: false }
+    });
     await isolated.close();
   });
 
@@ -173,9 +421,15 @@ describe("connected agent adapter", () => {
     const isolated = buildServer();
     await isolated.ready();
     await isolated.inject({ method: "POST", url: "/v1/learning", payload: correction });
-    await isolated.inject({ method: "POST", url: "/v1/agent/run", payload: { context: context(), request: "Draft", baseline: "BASELINE" } });
+    await isolated.inject({
+      method: "POST",
+      url: "/v1/agent/run",
+      payload: { context: context(), request: "Draft", baseline: "BASELINE" }
+    });
     const runs = await isolated.inject({ method: "GET", url: "/v1/runs" });
-    expect(runs.json<{ items: Array<{ run: { trace: { changed: boolean; packHash: string } } }> }>().items[0]?.run.trace).toMatchObject({ changed: true, packHash: expect.stringMatching(/^sha256:/) });
+    expect(
+      runs.json<{ items: Array<{ run: { trace: { changed: boolean; packHash: string } } }> }>().items[0]?.run.trace
+    ).toMatchObject({ changed: true, packHash: expect.stringMatching(/^sha256:/) });
     await isolated.close();
   });
 
@@ -184,14 +438,30 @@ describe("connected agent adapter", () => {
     await isolated.ready();
     const learned = await isolated.inject({ method: "POST", url: "/v1/learning", payload: correction });
     const lesson = learned.json<{ lesson: { id: string; version: number } }>().lesson;
-    const split = await isolated.inject({ method: "POST", url: `/v1/profile/atoms/${lesson.id}/commands`, payload: { atom_id: lesson.id, expected_version: lesson.version, operation: "split", claims: ["Use concise subjects", "Use detailed technical plans"] } });
+    const split = await isolated.inject({
+      method: "POST",
+      url: `/v1/profile/atoms/${lesson.id}/commands`,
+      payload: {
+        atom_id: lesson.id,
+        expected_version: lesson.version,
+        operation: "split",
+        claims: ["Use concise subjects", "Use detailed technical plans"]
+      }
+    });
     expect(split.statusCode).toBe(200);
     const successors = split.json<{ atoms: Array<{ id: string; lifecycle: string }> }>().atoms;
     expect(successors).toHaveLength(2);
-    const successorTrace = await isolated.inject({ method: "GET", url: `/v1/profile/atoms/${successors[1]!.id}/trace` });
-    expect(successorTrace.json<{ trace: { atom?: { id: string; lifecycle: string }; event: { id: string } } }>().trace).toMatchObject({ atom: { id: successors[1]!.id, lifecycle: "candidate" }, event: { id: expect.any(String) } });
+    const successorTrace = await isolated.inject({
+      method: "GET",
+      url: `/v1/profile/atoms/${successors[1]!.id}/trace`
+    });
+    expect(
+      successorTrace.json<{ trace: { atom?: { id: string; lifecycle: string }; event: { id: string } } }>().trace
+    ).toMatchObject({ atom: { id: successors[1]!.id, lifecycle: "candidate" }, event: { id: expect.any(String) } });
     const listed = await isolated.inject({ method: "GET", url: "/v1/profile/atoms" });
-    expect(listed.json<{ items: Array<{ id: string; lifecycle: string }> }>().items).toContainEqual(expect.objectContaining({ id: lesson.id, lifecycle: "superseded" }));
+    expect(listed.json<{ items: Array<{ id: string; lifecycle: string }> }>().items).toContainEqual(
+      expect.objectContaining({ id: lesson.id, lifecycle: "superseded" })
+    );
     await isolated.close();
   });
 
@@ -200,11 +470,26 @@ describe("connected agent adapter", () => {
     await isolated.ready();
     const learned = await isolated.inject({ method: "POST", url: "/v1/learning", payload: correction });
     const lesson = learned.json<{ lesson: { id: string; version: number; confidence: number } }>().lesson;
-    const counter = await isolated.inject({ method: "POST", url: "/v1/corrections", payload: { ...correction, runId: "counter-run", correction: "Use more detail in technical plans" } });
+    const counter = await isolated.inject({
+      method: "POST",
+      url: "/v1/corrections",
+      payload: { ...correction, runId: "counter-run", correction: "Use more detail in technical plans" }
+    });
     const eventId = counter.json<{ evidence: { eventId: string } }>().evidence.eventId;
-    const weakened = await isolated.inject({ method: "POST", url: `/v1/profile/atoms/${lesson.id}/commands`, payload: { atom_id: lesson.id, expected_version: lesson.version, operation: "weaken", counterevidence_event_id: eventId } });
+    const weakened = await isolated.inject({
+      method: "POST",
+      url: `/v1/profile/atoms/${lesson.id}/commands`,
+      payload: {
+        atom_id: lesson.id,
+        expected_version: lesson.version,
+        operation: "weaken",
+        counterevidence_event_id: eventId
+      }
+    });
     expect(weakened.statusCode).toBe(200);
-    expect(weakened.json<{ atom: { counterevidence: Array<{ event_id: string }>; confidence: number } }>().atom).toMatchObject({ confidence: expect.any(Number), counterevidence: [{ event_id: eventId }] });
+    expect(
+      weakened.json<{ atom: { counterevidence: Array<{ event_id: string }>; confidence: number } }>().atom
+    ).toMatchObject({ confidence: expect.any(Number), counterevidence: [{ event_id: eventId }] });
     await isolated.close();
   });
 
@@ -220,30 +505,105 @@ describe("connected agent adapter", () => {
   it("ingests explicit activities and objective outcomes as immutable source events", async () => {
     const isolated = buildServer();
     await isolated.ready();
-    const activity = await isolated.inject({ method: "POST", url: "/v1/activity", payload: { tenantId: "tenant-a", subjectId: "user-a", actorId: "user-a", runId: "run-activity", taskType: "email", activityType: "approval", content: "Approved concise subject", scope: { level: "project", ref: "acme" }, mode: "concise" } });
+    const activity = await isolated.inject({
+      method: "POST",
+      url: "/v1/activity",
+      payload: {
+        tenantId: "tenant-a",
+        subjectId: "user-a",
+        actorId: "user-a",
+        runId: "run-activity",
+        taskType: "email",
+        activityType: "approval",
+        content: "Approved concise subject",
+        scope: { level: "project", ref: "acme" },
+        mode: "concise"
+      }
+    });
     expect(activity.statusCode).toBe(201);
-    expect(activity.json<{ evidence: { event: { event_type: string; source_id: string }; source: { trust_class: string } } }>().evidence).toMatchObject({ source: { trust_class: "explicit_user" }, event: { event_type: "approval" } });
+    expect(
+      activity.json<{
+        evidence: { event: { event_type: string; source_id: string }; source: { trust_class: string } };
+      }>().evidence
+    ).toMatchObject({ source: { trust_class: "explicit_user" }, event: { event_type: "approval" } });
     const activityEventId = activity.json<{ evidence: { event: { id: string } } }>().evidence.event.id;
-    expect((await isolated.inject({ method: "GET", url: `/v1/learning/trace/${activityEventId}` })).json<{ trace: { observation?: { epistemicClass: string }; atom?: unknown } }>().trace).toMatchObject({ observation: { epistemicClass: "direct" } });
-    const outcome = await isolated.inject({ method: "POST", url: "/v1/outcomes", payload: { tenantId: "tenant-a", subjectId: "user-a", runId: "run-activity", outcomeType: "accepted", outcome: { accepted: true }, scope: { level: "project", ref: "acme" }, mode: "concise" } });
+    expect(
+      (await isolated.inject({ method: "GET", url: `/v1/learning/trace/${activityEventId}` })).json<{
+        trace: { observation?: { epistemicClass: string }; atom?: unknown };
+      }>().trace
+    ).toMatchObject({ observation: { epistemicClass: "direct" } });
+    const outcome = await isolated.inject({
+      method: "POST",
+      url: "/v1/outcomes",
+      payload: {
+        tenantId: "tenant-a",
+        subjectId: "user-a",
+        runId: "run-activity",
+        outcomeType: "accepted",
+        outcome: { accepted: true },
+        scope: { level: "project", ref: "acme" },
+        mode: "concise"
+      }
+    });
     expect(outcome.statusCode).toBe(201);
-    expect(outcome.json<{ evidence: { event: { event_type: string }; source: { trust_class: string } } }>().evidence).toMatchObject({ source: { trust_class: "objective_outcome" }, event: { event_type: "outcome" } });
+    expect(
+      outcome.json<{ evidence: { event: { event_type: string }; source: { trust_class: string } } }>().evidence
+    ).toMatchObject({ source: { trust_class: "objective_outcome" }, event: { event_type: "outcome" } });
     await isolated.close();
   });
 
   it("keeps an activity-derived lesson governed until a canonical approval changes a related run", async () => {
     const isolated = buildServer();
     await isolated.ready();
-    const activity = await isolated.inject({ method: "POST", url: "/v1/activity", payload: { tenantId: "tenant-a", subjectId: "user-a", actorId: "user-a", runId: "activity-candidate", taskType: "email", activityType: "edit", content: "Replace the long subject with a concise subject", scope: correction.scope, mode: correction.mode, payload: { before: "Long", after: "Concise" } } });
+    const activity = await isolated.inject({
+      method: "POST",
+      url: "/v1/activity",
+      payload: {
+        tenantId: "tenant-a",
+        subjectId: "user-a",
+        actorId: "user-a",
+        runId: "activity-candidate",
+        taskType: "email",
+        activityType: "edit",
+        content: "Replace the long subject with a concise subject",
+        scope: correction.scope,
+        mode: correction.mode,
+        payload: { before: "Long", after: "Concise" }
+      }
+    });
     const eventId = activity.json<{ evidence: { event: { id: string } } }>().evidence.event.id;
-    const proposed = await isolated.inject({ method: "POST", url: "/v1/learning/candidates", payload: { event_id: eventId, claim: "For email, use concise subject lines.", facet: "communication" } });
+    const proposed = await isolated.inject({
+      method: "POST",
+      url: "/v1/learning/candidates",
+      payload: { event_id: eventId, claim: "For email, use concise subject lines.", facet: "communication" }
+    });
     expect(proposed.statusCode).toBe(201);
     const lesson = proposed.json<{ lesson: { id: string; version: number; lifecycle: string } }>().lesson;
     expect(lesson.lifecycle).toBe("candidate");
-    expect((await isolated.inject({ method: "POST", url: "/v1/agent/run", payload: { context: context(), request: "Draft", baseline: "BASELINE" } })).json<{ output: string }>().output).toBe("BASELINE");
-    const approved = await isolated.inject({ method: "POST", url: `/v1/profile/atoms/${lesson.id}/commands`, payload: { atom_id: lesson.id, expected_version: lesson.version, operation: "confirm" } });
+    expect(
+      (
+        await isolated.inject({
+          method: "POST",
+          url: "/v1/agent/run",
+          payload: { context: context(), request: "Draft", baseline: "BASELINE" }
+        })
+      ).json<{ output: string }>().output
+    ).toBe("BASELINE");
+    const approved = await isolated.inject({
+      method: "POST",
+      url: `/v1/profile/atoms/${lesson.id}/commands`,
+      payload: { atom_id: lesson.id, expected_version: lesson.version, operation: "confirm" }
+    });
     expect(approved.statusCode).toBe(200);
-    expect((await isolated.inject({ method: "POST", url: "/v1/agent/run", payload: { context: context(), request: "Draft", baseline: "BASELINE" } })).json<{ output: string }>().output).toContain("concise subject lines");
+    expect(
+      (
+        await isolated.inject({
+          method: "POST",
+          url: "/v1/agent/run",
+          payload: { context: context(), request: "Draft", baseline: "BASELINE" }
+        })
+      ).json<{ output: string }>().output
+    ).toContain("concise subject lines");
     await isolated.close();
   });
 
@@ -252,18 +612,48 @@ describe("connected agent adapter", () => {
     await isolated.ready();
     const learned = await isolated.inject({ method: "POST", url: "/v1/learning", payload: correction });
     const lesson = learned.json<{ lesson: { id: string } }>().lesson;
-    const outcome = await isolated.inject({ method: "POST", url: "/v1/outcomes", payload: { tenantId: "tenant-a", subjectId: "user-a", runId: "run-a", outcomeType: "accepted", outcome: { accepted: true }, scope: correction.scope, mode: correction.mode } });
+    const outcome = await isolated.inject({
+      method: "POST",
+      url: "/v1/outcomes",
+      payload: {
+        tenantId: "tenant-a",
+        subjectId: "user-a",
+        runId: "run-a",
+        outcomeType: "accepted",
+        outcome: { accepted: true },
+        scope: correction.scope,
+        mode: correction.mode
+      }
+    });
     const eventId = outcome.json<{ evidence: { event: { id: string } } }>().evidence.event.id;
-    const created = await isolated.inject({ method: "POST", url: "/v1/update-proposals", payload: { lesson_id: lesson.id, evidence_event_id: eventId, operation: "reinforce" } });
+    const created = await isolated.inject({
+      method: "POST",
+      url: "/v1/update-proposals",
+      payload: { lesson_id: lesson.id, evidence_event_id: eventId, operation: "reinforce" }
+    });
     expect(created.statusCode).toBe(201);
     const proposal = created.json<{ proposal: { id: string; status: string; target: { id: string } } }>().proposal;
     expect(proposal).toMatchObject({ status: "pending", target: { id: lesson.id } });
-    const approved = await isolated.inject({ method: "POST", url: `/v1/update-proposals/${proposal.id}/commands`, payload: { operation: "approve" } });
-    expect(approved.json<{ proposal: { status: string }; atom: { utility: number } }>().proposal.status).toBe("applied");
-    expect(approved.json<{ proposal: { status: string }; atom: { utility: number } }>().atom.utility).toBeGreaterThan(0);
+    const approved = await isolated.inject({
+      method: "POST",
+      url: `/v1/update-proposals/${proposal.id}/commands`,
+      payload: { operation: "approve" }
+    });
+    expect(approved.json<{ proposal: { status: string }; atom: { utility: number } }>().proposal.status).toBe(
+      "applied"
+    );
+    expect(approved.json<{ proposal: { status: string }; atom: { utility: number } }>().atom.utility).toBeGreaterThan(
+      0
+    );
     const listed = await isolated.inject({ method: "GET", url: "/v1/update-proposals" });
-    expect(listed.json<{ items: Array<{ id: string; status: string }> }>().items).toContainEqual(expect.objectContaining({ id: proposal.id, status: "applied" }));
-    const rollback = await isolated.inject({ method: "POST", url: `/v1/update-proposals/${proposal.id}/commands`, payload: { operation: "rollback" } });
+    expect(listed.json<{ items: Array<{ id: string; status: string }> }>().items).toContainEqual(
+      expect.objectContaining({ id: proposal.id, status: "applied" })
+    );
+    const rollback = await isolated.inject({
+      method: "POST",
+      url: `/v1/update-proposals/${proposal.id}/commands`,
+      payload: { operation: "rollback" }
+    });
     expect(rollback.json<{ proposal: { status: string } }>().proposal.status).toBe("rolled_back");
     await isolated.close();
   });
@@ -272,8 +662,19 @@ describe("connected agent adapter", () => {
     const isolated = buildServer();
     await isolated.ready();
     await isolated.inject({ method: "POST", url: "/v1/learning", payload: correction });
-    const response = await isolated.inject({ method: "POST", url: "/v1/agent/run", payload: { context: context(), request: "Draft", baseline: "BASELINE" } });
-    const trace = response.json<{ trace: { runId: string; taskContextDigest: string; candidates: Array<{ decision: string; reasons: string[] }>; provenance: Array<{ evidenceEventIds: string[] }> } }>().trace;
+    const response = await isolated.inject({
+      method: "POST",
+      url: "/v1/agent/run",
+      payload: { context: context(), request: "Draft", baseline: "BASELINE" }
+    });
+    const trace = response.json<{
+      trace: {
+        runId: string;
+        taskContextDigest: string;
+        candidates: Array<{ decision: string; reasons: string[] }>;
+        provenance: Array<{ evidenceEventIds: string[] }>;
+      };
+    }>().trace;
     expect(trace.taskContextDigest).toMatch(/^sha256:/);
     expect(trace.candidates.some((candidate) => candidate.decision === "included")).toBe(true);
     expect(trace.provenance[0]?.evidenceEventIds.length).toBeGreaterThan(0);
@@ -287,14 +688,46 @@ describe("connected agent adapter", () => {
     const isolated = buildServer();
     await isolated.ready();
     await isolated.inject({ method: "POST", url: "/v1/learning", payload: correction });
-    const run = await isolated.inject({ method: "POST", url: "/v1/agent/run", payload: { context: context(), request: "Draft", baseline: "BASELINE" } });
+    const run = await isolated.inject({
+      method: "POST",
+      url: "/v1/agent/run",
+      payload: { context: context(), request: "Draft", baseline: "BASELINE" }
+    });
     const runId = run.json<{ trace: { runId: string } }>().trace.runId;
-    const model = await isolated.inject({ method: "POST", url: "/v1/evaluations", payload: { run_id: runId, experiment_id: "experiment-1", arm_id: "meraki", evaluator_class: "model_weak", criteria: { clarity: 0.9 }, result: "win", uncertainty: 0.2 } });
+    const model = await isolated.inject({
+      method: "POST",
+      url: "/v1/evaluations",
+      payload: {
+        run_id: runId,
+        experiment_id: "experiment-1",
+        arm_id: "meraki",
+        evaluator_class: "model_weak",
+        criteria: { clarity: 0.9 },
+        result: "win",
+        uncertainty: 0.2
+      }
+    });
     expect(model.statusCode).toBe(201);
-    const objective = await isolated.inject({ method: "POST", url: "/v1/evaluations", payload: { run_id: runId, experiment_id: "experiment-1", arm_id: "meraki", evaluator_class: "objective", criteria: { accepted: 1 }, result: "win", uncertainty: 0 } });
-    expect(objective.json<{ record: { effective: boolean; attribution?: { target: { id: string }; effect: number } } }>().record).toMatchObject({ effective: true, attribution: { effect: 1 } });
+    const objective = await isolated.inject({
+      method: "POST",
+      url: "/v1/evaluations",
+      payload: {
+        run_id: runId,
+        experiment_id: "experiment-1",
+        arm_id: "meraki",
+        evaluator_class: "objective",
+        criteria: { accepted: 1 },
+        result: "win",
+        uncertainty: 0
+      }
+    });
+    expect(
+      objective.json<{ record: { effective: boolean; attribution?: { target: { id: string }; effect: number } } }>()
+        .record
+    ).toMatchObject({ effective: true, attribution: { effect: 1 } });
     const evaluations = await isolated.inject({ method: "GET", url: "/v1/evaluations" });
-    const items = evaluations.json<{ items: Array<{ evaluation: { evaluator_class: string }; effective: boolean }> }>().items;
+    const items = evaluations.json<{ items: Array<{ evaluation: { evaluator_class: string }; effective: boolean }> }>()
+      .items;
     expect(items.find((item) => item.evaluation.evaluator_class === "objective")?.effective).toBe(true);
     expect(items.find((item) => item.evaluation.evaluator_class === "model_weak")?.effective).toBe(false);
     await isolated.close();
@@ -306,14 +739,30 @@ describe("connected agent adapter", () => {
       const original = new ConnectedAgentRuntime();
       original.learn(correction);
       const run = original.run({ context: context(), request: "Draft", baseline: "BASELINE" });
-      original.recordEvaluation({ runId: run.trace.runId, experimentId: "restart-experiment", armId: "meraki", evaluatorClass: "objective", criteria: { accepted: 1 }, result: "win", uncertainty: 0 });
+      original.recordEvaluation({
+        runId: run.trace.runId,
+        experimentId: "restart-experiment",
+        armId: "meraki",
+        evaluatorClass: "objective",
+        criteria: { accepted: 1 },
+        result: "win",
+        uncertainty: 0
+      });
       const store = new JsonConnectedRuntimeStore(join(directory, "runtime.json"));
       await store.save(original);
       const restored = await store.load();
       expect(restored.getRun(run.trace.runId)?.run.trace.packHash).toBe(run.trace.packHash);
-      expect(restored.evaluations()[0]).toMatchObject({ runId: run.trace.runId, effective: true, attribution: { effect: 1 } });
-      expect(restored.run({ context: context(), request: "Later draft", baseline: "BASELINE" }).trace.changed).toBe(true);
-    } finally { await rm(directory, { recursive: true, force: true }); }
+      expect(restored.evaluations()[0]).toMatchObject({
+        runId: run.trace.runId,
+        effective: true,
+        attribution: { effect: 1 }
+      });
+      expect(restored.run({ context: context(), request: "Later draft", baseline: "BASELINE" }).trace.changed).toBe(
+        true
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it("persists runs and evaluations across a clean Fastify close and reopen", async () => {
@@ -323,15 +772,36 @@ describe("connected agent adapter", () => {
       const first = await buildPersistentServer(path);
       await first.ready();
       await first.inject({ method: "POST", url: "/v1/learning", payload: correction });
-      const run = await first.inject({ method: "POST", url: "/v1/agent/run", payload: { context: context(), request: "Draft", baseline: "BASELINE" } });
+      const run = await first.inject({
+        method: "POST",
+        url: "/v1/agent/run",
+        payload: { context: context(), request: "Draft", baseline: "BASELINE" }
+      });
       const runId = run.json<{ trace: { runId: string } }>().trace.runId;
-      await first.inject({ method: "POST", url: "/v1/evaluations", payload: { run_id: runId, experiment_id: "api-restart", arm_id: "meraki", evaluator_class: "objective", criteria: { accepted: 1 }, result: "win", uncertainty: 0 } });
+      await first.inject({
+        method: "POST",
+        url: "/v1/evaluations",
+        payload: {
+          run_id: runId,
+          experiment_id: "api-restart",
+          arm_id: "meraki",
+          evaluator_class: "objective",
+          criteria: { accepted: 1 },
+          result: "win",
+          uncertainty: 0
+        }
+      });
       await first.close();
       const second = await buildPersistentServer(path);
       await second.ready();
       expect((await second.inject({ method: "GET", url: `/v1/runs/${runId}` })).statusCode).toBe(200);
-      expect((await second.inject({ method: "GET", url: "/v1/evaluations" })).json<{ items: Array<{ runId: string }> }>().items[0]?.runId).toBe(runId);
+      expect(
+        (await second.inject({ method: "GET", url: "/v1/evaluations" })).json<{ items: Array<{ runId: string }> }>()
+          .items[0]?.runId
+      ).toBe(runId);
       await second.close();
-    } finally { await rm(directory, { recursive: true, force: true }); }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });
