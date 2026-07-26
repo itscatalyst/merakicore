@@ -30,7 +30,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install contract validator
-        run: python -m pip install --disable-pip-version-check jsonschema==4.23.0
+        run: python -m pip install --disable-pip-version-check jsonschema==4.23.0 PyYAML==6.0.2
       - name: Install
         run: pnpm install --frozen-lockfile
       - name: Verify
