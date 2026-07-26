@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { AuthorizationError, requireScopes, toDatabaseSessionContext } from "./index.js";
+import {
+  assertBearerCredential,
+  AuthenticationError,
+  AuthorizationError,
+  requireScopes,
+  toDatabaseSessionContext
+} from "./index.js";
 
 const context = {
   tenantId: "server-tenant",
@@ -23,5 +29,13 @@ describe("authenticated authority", () => {
       sessionId: "server-session",
       scopes: ["profile:read"]
     });
+  });
+
+  it("requires an exact bearer credential", () => {
+    const token = "0123456789abcdef0123456789abcdef";
+    expect(() => assertBearerCredential(`Bearer ${token}`, token)).not.toThrow();
+    expect(() => assertBearerCredential(undefined, token)).toThrow(AuthenticationError);
+    expect(() => assertBearerCredential(`Bearer ${token}x`, token)).toThrow(AuthenticationError);
+    expect(() => assertBearerCredential("Basic dXNlcjpwYXNz", token)).toThrow(AuthenticationError);
   });
 });

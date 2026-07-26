@@ -132,6 +132,23 @@ describe("connected agent adapter", () => {
     await isolated.close();
   });
 
+  it("rejects identity headers without the server bearer credential", async () => {
+    const token = "0123456789abcdef0123456789abcdef";
+    const isolated = buildServer(new ConnectedAgentRuntime(), undefined, token);
+    await isolated.ready();
+    const headers = { "x-meraki-tenant-id": "tenant-a", "x-meraki-subject-id": "user-a" };
+    const missing = await isolated.inject({ method: "GET", url: "/v1/profile/atoms", headers });
+    expect(missing.statusCode).toBe(401);
+    expect(missing.json<{ error: string }>().error).toBe("authentication_required");
+    const accepted = await isolated.inject({
+      method: "GET",
+      url: "/v1/profile/atoms",
+      headers: { ...headers, authorization: `Bearer ${token}` }
+    });
+    expect(accepted.statusCode).toBe(200);
+    await isolated.close();
+  });
+
   it("rejects valid-identity malformed activity without mutating the runtime", async () => {
     const runtime = new ConnectedAgentRuntime();
     const isolated = buildServer(runtime);

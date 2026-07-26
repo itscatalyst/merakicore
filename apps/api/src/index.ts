@@ -2,7 +2,13 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { pathToFileURL } from "node:url";
 import type { ProfileAtom, TaskContext } from "@meraki/contracts";
 import type { ExplicitActivityType } from "@meraki/evidence";
-import { assertAuthenticatedIdentity, resolveAuthenticatedContext, type AuthenticatedContext } from "@meraki/security";
+import {
+  assertAuthenticatedIdentity,
+  assertBearerCredential,
+  resolveApiToken,
+  resolveAuthenticatedContext,
+  type AuthenticatedContext
+} from "@meraki/security";
 import {
   ConnectedAgentRuntime,
   evaluateConnectedCausalComparison,
@@ -135,12 +141,15 @@ const validateRun = (value: unknown): void => {
 
 export const buildServer = (
   runtime = new ConnectedAgentRuntime(),
-  authority: AuthenticatedContext = resolveAuthenticatedContext()
+  authority: AuthenticatedContext = resolveAuthenticatedContext(),
+  apiToken: string | undefined = resolveApiToken()
 ): FastifyInstance => {
   const server = Fastify({ logger: false });
   server.addHook("onRequest", async (request, reply) => {
-    if (process.env.NODE_ENV === "test") return;
+    if (process.env.NODE_ENV === "test" && apiToken === undefined) return;
     try {
+      if (!apiToken) throw new Error("MERAKI_API_TOKEN_REQUIRED");
+      assertBearerCredential(request.headers.authorization, apiToken);
       const tenantId = request.headers["x-meraki-tenant-id"];
       const subjectId = request.headers["x-meraki-subject-id"];
       assertAuthenticatedIdentity(authority, {
