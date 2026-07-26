@@ -155,6 +155,8 @@ docs/           public guides plus detailed technical notes
 
 ## Read the docs
 
+Use the [documentation index](docs/README.md) as the repository wiki and visual system map.
+
 Start with the short pages:
 
 - [What Meraki is](docs/what-meraki-is.md)
@@ -170,6 +172,8 @@ Then use the detailed references when you need them:
 - [Installation](docs/install.md)
 - [Runtime prerequisite](docs/runtime-prerequisite.md)
 - [Completion audit](docs/completion-audit.md)
+- [Build and release](docs/build-and-release.md)
+- [Security review](docs/security-review.md)
 
 ## Run locally
 
