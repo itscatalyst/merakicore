@@ -444,15 +444,6 @@ export type ExportManifest = {
   "created_at" : Time;
 };
 
-export type StudioEventEnvelope = {
-  "contract" : "studio_event_envelope";
-  "event_id" : number;
-  "event_type" : string;
-  "resource_type" : string;
-  "resource_id" : Uuid;
-  "occurred_at" : Time;
-};
-
 export type GraphPage = {
   "contract" : "graph_page";
   "nodes" : Array<GraphNode>;
@@ -497,15 +488,6 @@ export type ProposalCommand = {
   "reason" : string;
 };
 
-export type StudioOverview = {
-  "contract" : "studio_overview";
-  "goal_id" : string;
-  "health" : "healthy" | "degraded" | "offline";
-  "contract_version" : string;
-  "counts" : Record<string, unknown>;
-  "generated_at" : Time;
-};
-
 export type RunTrace = {
   "contract" : "run_trace";
   "run_id" : Uuid;
@@ -513,4 +495,4 @@ export type RunTrace = {
   "page" : PageInfo;
 };
 
-export type MerakiContract = AuthContext | SourceRecord | Artifact | Event | Observation | Signal | Hypothesis | Episode | ProfileAtom | ProfileEdge | ProfileSnapshot | TaskContext | RetrievalCandidate | MerakiPack | Agent | AgentControlCommand | Run | Feedback | Outcome | Evaluation | Attribution | UpdateProposal | Goal | Experiment | ExperimentArm | Job | DeletionPreview | DeletionRequest | ExportRequest | ExportManifest | StudioEventEnvelope | GraphPage | ApiError | IdempotencyReceipt | AtomCommand | ProposalCommand | StudioOverview | RunTrace;
+export type MerakiContract = AuthContext | SourceRecord | Artifact | Event | Observation | Signal | Hypothesis | Episode | ProfileAtom | ProfileEdge | ProfileSnapshot | TaskContext | RetrievalCandidate | MerakiPack | Agent | AgentControlCommand | Run | Feedback | Outcome | Evaluation | Attribution | UpdateProposal | Goal | Experiment | ExperimentArm | Job | DeletionPreview | DeletionRequest | ExportRequest | ExportManifest | GraphPage | ApiError | IdempotencyReceipt | AtomCommand | ProposalCommand | RunTrace;

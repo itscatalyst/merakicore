@@ -1,0 +1,21 @@
+{
+  "name": "@meraki/auth",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty false",
+    "test": "vitest run src/index.test.ts",
+    "local-token": "node dist/local-token.js"
+  },
+  "dependencies": {
+    "jose": "6.2.3"
+  }
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ConnectedAgentRuntime } from "@meraki/api";
+import { ConnectedAgentRuntime } from "@meraki/core";
 import { MERAKI_MCP_TOOLS, MerakiMcpAdapter } from "./index.js";
 
 const context = {
@@ -25,6 +25,13 @@ const correction = {
   scope: context.scope,
   mode: "concise"
 };
+const authority = {
+  tenantId: "tenant-a",
+  subjectId: "user-a",
+  actorId: "user-a",
+  sessionId: "mcp-test",
+  scopes: new Set(["profile:read", "evidence:write"])
+} as const;
 
 describe("Meraki MCP adapter", () => {
   it("publishes only the governed retrieval/evidence tools", () => {
@@ -38,14 +45,17 @@ describe("Meraki MCP adapter", () => {
     expect(MERAKI_MCP_TOOLS).not.toContain("profile_write");
   });
   it("records feedback and returns immutable source/event lineage", async () => {
-    const result = await new MerakiMcpAdapter().handle({ name: "meraki_record_feedback", arguments: correction });
+    const result = await new MerakiMcpAdapter(new ConnectedAgentRuntime(), authority).handle({
+      name: "meraki_record_feedback",
+      arguments: correction
+    });
     expect(result.isError).toBeUndefined();
     expect(
       (result.content as { evidence: { source: { trust_class: string }; event: { event_type: string } } }).evidence
     ).toMatchObject({ source: { trust_class: "explicit_user" }, event: { event_type: "approval" } });
   });
   it("records objective outcomes", async () => {
-    const result = await new MerakiMcpAdapter().handle({
+    const result = await new MerakiMcpAdapter(new ConnectedAgentRuntime(), authority).handle({
       name: "meraki_record_outcome",
       arguments: {
         tenantId: "tenant-a",
@@ -61,7 +71,7 @@ describe("Meraki MCP adapter", () => {
     );
   });
   it("explains retrieval candidates and pack provenance", async () => {
-    const adapter = new MerakiMcpAdapter();
+    const adapter = new MerakiMcpAdapter(new ConnectedAgentRuntime(), authority);
     const result = await adapter.handle({ name: "meraki_explain_guidance", arguments: { context } });
     expect(result.isError).toBeUndefined();
     expect(result.content).toMatchObject({ candidates: [], pack: { hash: expect.stringMatching(/^sha256:/) } });
@@ -79,7 +89,7 @@ describe("Meraki MCP adapter", () => {
       original: "Draft",
       correction: "Use concise subjects"
     });
-    const adapter = new MerakiMcpAdapter(runtime);
+    const adapter = new MerakiMcpAdapter(runtime, authority);
     const related = await adapter.handle({ name: "meraki_get_guidance", arguments: { context } });
     expect(related.isError).toBeUndefined();
     expect(related.content).toMatchObject({
@@ -102,7 +112,7 @@ describe("Meraki MCP adapter", () => {
       original: "Draft",
       correction: "Use concise subjects"
     });
-    const adapter = new MerakiMcpAdapter(runtime);
+    const adapter = new MerakiMcpAdapter(runtime, authority);
     const request = { name: "meraki_get_guidance" as const, arguments: { context } };
     const first = await adapter.handle(request);
     const second = await adapter.handle(request);
@@ -116,7 +126,7 @@ describe("Meraki MCP adapter", () => {
     expect(revoked.content).toMatchObject({ pack: { items: [] } });
   });
   it("rejects malformed feedback and outcome without creating evidence", async () => {
-    const adapter = new MerakiMcpAdapter();
+    const adapter = new MerakiMcpAdapter(new ConnectedAgentRuntime(), authority);
     const feedback = await adapter.handle({
       name: "meraki_record_feedback",
       arguments: { ...correction, content: "" }
@@ -136,12 +146,15 @@ describe("Meraki MCP adapter", () => {
     expect(outcome.isError).toBe(true);
   });
   it("rejects incomplete task context without throwing across the MCP boundary", async () => {
-    const result = await new MerakiMcpAdapter().handle({ name: "meraki_get_guidance", arguments: { context: {} } });
+    const result = await new MerakiMcpAdapter(new ConnectedAgentRuntime(), authority).handle({
+      name: "meraki_get_guidance",
+      arguments: { context: {} }
+    });
     expect(result).toMatchObject({ isError: true, content: { code: "TASK_CONTEXT_INCOMPLETE" } });
   });
   it("rejects tenant or subject tampering before MCP state mutation", async () => {
     const runtime = new ConnectedAgentRuntime();
-    const adapter = new MerakiMcpAdapter(runtime);
+    const adapter = new MerakiMcpAdapter(runtime, authority);
     const before = runtime.snapshot();
     const guidance = await adapter.handle({
       name: "meraki_get_guidance",

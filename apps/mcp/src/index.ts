@@ -1,6 +1,11 @@
 import type { TaskContext } from "@meraki/contracts";
-import { ConnectedAgentRuntime } from "@meraki/api";
-import { assertAuthenticatedIdentity, resolveAuthenticatedContext, type AuthenticatedContext } from "@meraki/security";
+import { ConnectedAgentRuntime } from "@meraki/core";
+import { JsonConnectedRuntimeStore } from "@meraki/storage-local";
+import {
+  assertAuthenticatedIdentity,
+  requestAuthenticatorFromEnvironment,
+  type AuthenticatedContext
+} from "@meraki/auth";
 
 export const MERAKI_MCP_TOOLS = [
   "meraki_get_guidance",
@@ -29,7 +34,7 @@ const context = (value: unknown): TaskContext => {
   if (
     !scope ||
     typeof scope !== "object" ||
-    !["global", "tenant", "project", "task"].includes(scope.level) ||
+    !["run", "task", "project", "mode", "domain", "workspace", "relationship", "user", "team"].includes(scope.level) ||
     (scope.ref !== undefined && typeof scope.ref !== "string")
   )
     throw new Error("SCOPE_INVALID");
@@ -69,18 +74,19 @@ const outcome = (value: unknown) => {
   return input as Parameters<ConnectedAgentRuntime["outcome"]>[0];
 };
 
-/** Typed MCP-facing adapter. It exposes retrieval and evidence/outcome ingestion only; profile writes remain governed by Studio/API commands. */
+/** Typed MCP-facing adapter. It exposes retrieval and evidence/outcome ingestion only; profile writes remain governed by authenticated API commands. */
 export class MerakiMcpAdapter {
   constructor(
-    private readonly runtime = new ConnectedAgentRuntime(),
-    private readonly authority: AuthenticatedContext = resolveAuthenticatedContext()
+    private readonly runtime: ConnectedAgentRuntime,
+    private readonly authority: AuthenticatedContext,
+    private readonly onMutation: () => Promise<void> = () => Promise.resolve()
   ) {}
 
-  handle(request: McpRequest): Promise<McpResponse> {
-    return Promise.resolve(this.dispatch(request));
+  async handle(request: McpRequest): Promise<McpResponse> {
+    return this.dispatch(request);
   }
 
-  private dispatch(request: McpRequest): McpResponse {
+  private async dispatch(request: McpRequest): Promise<McpResponse> {
     try {
       switch (request.name as string) {
         case "meraki_get_guidance": {
@@ -120,12 +126,16 @@ export class MerakiMcpAdapter {
         case "meraki_record_feedback": {
           const input = feedback(request.arguments);
           assertAuthenticatedIdentity(this.authority, input);
-          return { content: { evidence: this.runtime.activity(input) } };
+          const evidence = this.runtime.activity(input);
+          await this.onMutation();
+          return { content: { evidence } };
         }
         case "meraki_record_outcome": {
           const input = outcome(request.arguments);
           assertAuthenticatedIdentity(this.authority, input);
-          return { content: { evidence: this.runtime.outcome(input) } };
+          const evidence = this.runtime.outcome(input);
+          await this.onMutation();
+          return { content: { evidence } };
         }
       }
       throw new Error("UNKNOWN_MCP_TOOL");
@@ -146,4 +156,13 @@ export class MerakiMcpAdapter {
       };
     }
   }
+}
+
+export async function buildMcpAdapterFromEnvironment(): Promise<MerakiMcpAdapter> {
+  const token = process.env.MERAKI_MCP_TOKEN;
+  if (!token) throw new Error("MERAKI_MCP_TOKEN is required");
+  const authority = await requestAuthenticatorFromEnvironment().authenticate(`Bearer ${token}`);
+  const store = new JsonConnectedRuntimeStore(process.env.MERAKI_RUNTIME_PATH ?? ".meraki/runtime.json");
+  const runtime = await store.load();
+  return new MerakiMcpAdapter(runtime, authority, () => store.save(runtime));
 }

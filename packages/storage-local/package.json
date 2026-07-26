@@ -1,5 +1,5 @@
 {
-  "name": "@meraki/api",
+  "name": "@meraki/storage-local",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -14,10 +14,6 @@
     "typecheck": "tsc -b --pretty false"
   },
   "dependencies": {
-    "@meraki/auth": "workspace:*",
-    "@meraki/contracts": "workspace:*",
-    "@meraki/core": "workspace:*",
-    "@meraki/storage-local": "workspace:*",
-    "fastify": "^5.6.0"
+    "@meraki/core": "workspace:*"
   }
 }

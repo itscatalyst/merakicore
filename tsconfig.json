@@ -3,20 +3,11 @@
   "files": [],
   "references": [
     { "path": "./apps/api" },
-    { "path": "./apps/worker" },
     { "path": "./apps/mcp" },
-    { "path": "./apps/cli" },
-    { "path": "./apps/studio" },
     { "path": "./packages/contracts" },
-    { "path": "./packages/domain" },
-    { "path": "./packages/db" },
-    { "path": "./packages/evidence" },
-    { "path": "./packages/learning" },
-    { "path": "./packages/profile" },
-    { "path": "./packages/guidance" },
-    { "path": "./packages/evaluation" },
-    { "path": "./packages/providers" },
-    { "path": "./packages/security" },
-    { "path": "./packages/test-fixtures" }
+    { "path": "./packages/core" },
+    { "path": "./packages/auth" },
+    { "path": "./packages/storage-local" },
+    { "path": "./examples/quickstart" }
   ]
 }

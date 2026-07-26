@@ -1,4 +1,4 @@
-import { MerakiMcpAdapter, type McpRequest } from "./index.js";
+import { buildMcpAdapterFromEnvironment, MerakiMcpAdapter, type McpRequest } from "./index.js";
 import { MERAKI_MCP_TOOLS } from "./index.js";
 
 type JsonRpcEnvelope = McpRequest & {
@@ -19,7 +19,7 @@ const toolDescriptors = MERAKI_MCP_TOOLS.map((name) => ({
 }));
 
 /** Minimal newline-delimited MCP host transport. Stdout is protocol-only; diagnostics stay on stderr. */
-export const runStdioTransport = async (adapter = new MerakiMcpAdapter()): Promise<void> => {
+export const runStdioTransport = async (adapter: MerakiMcpAdapter): Promise<void> => {
   process.stdin.setEncoding("utf8");
   let buffer = "";
   let pending = Promise.resolve();
@@ -59,8 +59,7 @@ export const runStdioTransport = async (adapter = new MerakiMcpAdapter()): Promi
     buffer = lines.pop() ?? "";
     for (const line of lines) pending = pending.then(() => handleLine(line));
   });
-  process.stdin.resume();
-  await new Promise<void>((resolve) => {
+  const inputClosed = new Promise<void>((resolve) => {
     let settled = false;
     const finish = (): void => {
       if (settled) return;
@@ -73,12 +72,19 @@ export const runStdioTransport = async (adapter = new MerakiMcpAdapter()): Promi
     process.stdin.once("end", finish);
     process.stdin.once("close", finish);
   });
+  // Install EOF listeners before entering flowing mode. Otherwise a fast
+  // writer can close stdin between resume() and listener registration,
+  // leaving the transport waiting forever despite having received EOF.
+  process.stdin.resume();
+  await inputClosed;
   if (buffer.trim()) pending = pending.then(() => handleLine(buffer));
   await pending;
 };
 
 if (process.argv[1] && process.argv[1].endsWith("stdio.js"))
-  void runStdioTransport().catch((error: unknown) => {
-    process.stderr.write(`${error instanceof Error ? error.message : "MCP_TRANSPORT_FAILED"}\n`);
-    process.exitCode = 1;
-  });
+  void buildMcpAdapterFromEnvironment()
+    .then(runStdioTransport)
+    .catch((error: unknown) => {
+      process.stderr.write(`${error instanceof Error ? error.message : "MCP_TRANSPORT_FAILED"}\n`);
+      process.exitCode = 1;
+    });
