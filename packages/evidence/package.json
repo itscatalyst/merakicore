@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@meraki/contracts": "workspace:*"
+    "@meraki/contracts": "workspace:*",
+    "@meraki/domain": "workspace:*"
   },
   "exports": {
     ".": {

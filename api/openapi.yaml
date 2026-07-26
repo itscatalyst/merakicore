@@ -1,54 +1,198 @@
 openapi: 3.1.0
-info: { title: Meraki Core and Studio API, version: 0.1.0 }
-security: [{ bearerAuth: [] }, { studioSession: [] }]
+info:
+  title: Meraki Core Showcase API
+  version: 0.2.0
+  description: >-
+    The authenticated showcase surface for immutable evidence, governed profile
+    candidates, scoped runs, evaluations, trace inspection, and rollback.
+security:
+  - bearerAuth: []
 paths:
-  /health: { get: { security: [], responses: { '200': { description: Health and contract versions } } } }
-  /v1/ingest: { post: { responses: { '202': { description: Idempotent ingest receipt } } } }
-  /v1/learn: { post: { responses: { '202': { description: Learning job receipt } } } }
-  /v1/guide: { post: { responses: { '200': { description: Deterministic MerakiPack } } } }
-  /v1/runs: { get: { responses: { '200': { description: Cursor-paginated runs } } } }
-  /v1/runs/start: { post: { responses: { '201': { description: Run started } } } }
-  /v1/runs/{id}/finish:
+  /health:
+    get:
+      security: []
+      operationId: getHealth
+      responses:
+        "200":
+          description: Process health and contract version
+  /v1/corrections:
     post:
-      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
-      responses: { '200': { description: Run finished } }
-  /v1/feedback: { post: { responses: { '201': { description: Feedback recorded } } } }
-  /v1/outcomes: { post: { responses: { '201': { description: Outcome recorded } } } }
-  /v1/evaluate: { post: { responses: { '202': { description: Evaluation job receipt } } } }
-  /v1/profile/atoms: { get: { responses: { '200': { description: Cursor-paginated atom versions } } } }
+      operationId: recordCorrection
+      responses:
+        "201":
+          description: Immutable correction evidence
+        "403":
+          description: Request identity does not match authenticated authority
+        "422":
+          description: Invalid correction
+  /v1/activity:
+    post:
+      operationId: recordActivity
+      responses:
+        "201":
+          description: Immutable explicit-user activity evidence
+        "422":
+          description: Invalid activity
+  /v1/outcomes:
+    post:
+      operationId: recordOutcome
+      responses:
+        "201":
+          description: Immutable objective-outcome evidence
+        "422":
+          description: Invalid outcome
+  /v1/learning/candidates:
+    post:
+      operationId: createCandidate
+      description: Creates an inactive candidate from authenticated evidence.
+      responses:
+        "201":
+          description: Governed profile candidate
+        "422":
+          description: Evidence cannot support this candidate
+  /v1/agent/run:
+    post:
+      operationId: runAgent
+      responses:
+        "200":
+          description: Agent output, deterministic pack, and run trace
+        "422":
+          description: Invalid run request
+  /v1/profile/atoms:
+    get:
+      operationId: listProfileAtoms
+      responses:
+        "200":
+          description: Authenticated subject profile atoms
+  /v1/profile/atoms/{id}/trace:
+    get:
+      operationId: getAtomTrace
+      parameters:
+        - $ref: "#/components/parameters/AtomId"
+      responses:
+        "200":
+          description: Source-to-current-atom lineage
+        "404":
+          description: Atom trace not found
   /v1/profile/atoms/{id}/commands:
     post:
-      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
-      responses: { '200': { description: Versioned confirm edit rescope limit or revoke command }, '409': { description: Version conflict } }
-  /v1/update-proposals: { get: { responses: { '200': { description: Paginated proposals } } } }
+      operationId: commandProfileAtom
+      parameters:
+        - $ref: "#/components/parameters/AtomId"
+      responses:
+        "200":
+          description: Versioned confirm, edit, rescope, limit, weaken, split, supersede, or revoke result
+        "404":
+          description: Atom not found
+        "409":
+          description: Version or lifecycle conflict
+        "422":
+          description: Invalid command
+  /v1/learning/trace/{eventId}:
+    get:
+      operationId: getLearningTrace
+      parameters:
+        - in: path
+          name: eventId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Source, event, observation, signal, hypothesis, and current atom
+        "404":
+          description: Learning trace not found
+  /v1/update-proposals:
+    get:
+      operationId: listUpdateProposals
+      responses:
+        "200":
+          description: Authenticated subject update proposals
+    post:
+      operationId: createUpdateProposal
+      responses:
+        "201":
+          description: Pending evidence-backed update proposal
+        "409":
+          description: Target is not eligible for an update
+        "422":
+          description: Invalid proposal
   /v1/update-proposals/{id}/commands:
     post:
-      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
-      responses: { '200': { description: Approve reject or rollback proposal } }
-  /v1/agents: { get: { responses: { '200': { description: Paginated agents } } } }
-  /v1/agents/{id}/commands:
+      operationId: commandUpdateProposal
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Applied, rejected, or rolled-back proposal
+        "404":
+          description: Proposal not found
+        "409":
+          description: Proposal lifecycle conflict
+  /v1/runs:
+    get:
+      operationId: listRuns
+      responses:
+        "200":
+          description: Authenticated subject run records
+  /v1/runs/{runId}:
+    get:
+      operationId: getRun
+      parameters:
+        - in: path
+          name: runId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Run and complete trace
+        "404":
+          description: Run not found
+  /v1/evaluations:
+    get:
+      operationId: listEvaluations
+      responses:
+        "200":
+          description: Authenticated subject evaluations
     post:
-      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
-      responses: { '200': { description: Versioned pause restrict or disconnect command } }
-  /v1/studio/overview: { get: { responses: { '200': { description: Studio overview read model } } } }
-  /v1/studio/stream: { get: { responses: { '200': { description: Authenticated replayable SSE notifications } } } }
-  /v1/graph: { get: { responses: { '200': { description: Cursor-paginated focused graph projection } } } }
-  /v1/runs/{id}/trace:
-    get:
-      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
-      responses: { '200': { description: Paginated run lineage trace } }
-  /v1/experiments: { get: { responses: { '200': { description: Paginated experiments } } }, post: { responses: { '201': { description: Frozen experiment } } } }
-  /v1/goals: { get: { responses: { '200': { description: User goals } } }, post: { responses: { '201': { description: Versioned user goal } } } }
-  /v1/sources/{id}/deletion-preview:
-    get:
-      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
-      responses: { '200': { description: Dependent data impact } }
-  /v1/sources/{id}:
-    delete:
-      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
-      responses: { '202': { description: Confirmed deletion job } }
-  /v1/export: { post: { responses: { '202': { description: Audited export job } } } }
+      operationId: recordEvaluation
+      responses:
+        "201":
+          description: Evaluator verdict and optional attribution
+        "404":
+          description: Run not found
+        "422":
+          description: Invalid evaluation
+  /v1/evaluations/causal:
+    post:
+      operationId: runControlledComparison
+      description: >-
+        Deterministic showcase comparison. Provider-backed experiments use the
+        asynchronous executor surface and are recorded separately.
+      responses:
+        "201":
+          description: Baseline, raw-memory, Meraki, and ablation report
+        "422":
+          description: Invalid experiment
 components:
   securitySchemes:
-    bearerAuth: { type: http, scheme: bearer }
-    studioSession: { type: apiKey, in: cookie, name: meraki_session }
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    AtomId:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
+        format: uuid

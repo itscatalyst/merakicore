@@ -14,6 +14,7 @@
     "typecheck": "tsc -b --pretty false"
   },
   "dependencies": {
-    "@meraki/contracts": "workspace:*"
+    "@meraki/contracts": "workspace:*",
+    "@meraki/domain": "workspace:*"
   }
 }

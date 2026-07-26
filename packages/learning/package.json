@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@meraki/contracts": "workspace:*",
+    "@meraki/domain": "workspace:*",
     "@meraki/evidence": "workspace:*",
     "@meraki/guidance": "workspace:*",
     "@meraki/profile": "workspace:*"

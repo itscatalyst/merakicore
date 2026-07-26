@@ -11,6 +11,10 @@
   },
   "scripts": {
     "build": "tsc -b",
-    "typecheck": "tsc -b --pretty false"
+    "typecheck": "tsc -b --pretty false",
+    "test": "vitest run src/index.test.ts"
+  },
+  "dependencies": {
+    "canonicalize": "3.0.0"
   }
 }

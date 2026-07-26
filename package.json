@@ -26,7 +26,7 @@
     "db:test-live": "node scripts/db/run-live-tests.mjs",
     "security:test-isolation": "vitest run packages/db/src/migrations.test.ts packages/security/src/index.test.ts",
     "contracts:generate": "python scripts/contracts/generate.py",
-    "contracts:check": "python scripts/contracts/check.py",
+    "contracts:check": "python scripts/contracts/check.py && python scripts/contracts/check_openapi_routes.py",
     "orchestration:validate": "python scripts/orchestration/validate_execution_graph.py",
     "proof:validate": "python scripts/ci/validate_proof_manifest.py",
     "proof:verify": "python scripts/ci/capture_command_evidence.py verify --manifest ops/proof/G0-manifest.yaml",
