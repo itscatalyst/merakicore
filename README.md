@@ -69,7 +69,7 @@ The dependency direction is deliberate: applications depend on packages. MCP doe
 ## Verify
 
 ```bash
-corepack pnpm ci
+corepack pnpm verify
 ```
 
 This builds and typechecks the clean workspace, checks formatting and lint, runs unit and integration tests, verifies schema/OpenAPI drift, and executes the quickstart.

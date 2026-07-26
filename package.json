@@ -22,7 +22,7 @@
     "test": "vitest run --passWithNoTests",
     "contracts:generate": "python scripts/contracts/generate.py",
     "contracts:check": "python scripts/contracts/check.py && python scripts/contracts/check_openapi_routes.py",
-    "ci": "corepack pnpm build && corepack pnpm typecheck && corepack pnpm format:check && corepack pnpm lint && corepack pnpm test && corepack pnpm contracts:check && corepack pnpm example:quickstart"
+    "verify": "corepack pnpm build && corepack pnpm typecheck && corepack pnpm format:check && corepack pnpm lint && corepack pnpm test && corepack pnpm contracts:check && corepack pnpm example:quickstart"
   },
   "devDependencies": {
     "@eslint/js": "^9.35.0",
