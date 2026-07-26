@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
-  title: Meraki Core Showcase API
+  title: Meraki Core Local API
   version: 0.2.0
   description: >-
-    The authenticated showcase surface for immutable evidence, governed profile
+    The authenticated local surface for immutable evidence, governed profile
     candidates, scoped runs, evaluations, trace inspection, and rollback.
 security:
   - bearerAuth: []

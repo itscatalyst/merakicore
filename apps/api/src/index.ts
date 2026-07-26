@@ -1,21 +1,18 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { pathToFileURL } from "node:url";
 import type { ProfileAtom, TaskContext } from "@meraki/contracts";
-import type { ExplicitActivityType } from "@meraki/evidence";
+import type { ExplicitActivityType } from "@meraki/core";
 import {
   assertAuthenticatedIdentity,
   requestAuthenticatorFromEnvironment,
   StaticRequestAuthenticator,
   type AuthenticatedContext,
   type RequestAuthenticator
-} from "@meraki/security";
-import {
-  ConnectedAgentRuntime,
-  evaluateConnectedCausalComparison,
-  JsonConnectedRuntimeStore,
-  scopeFromUnknown
-} from "./runtime.js";
-export { ConnectedAgentRuntime, JsonConnectedRuntimeStore } from "./runtime.js";
+} from "@meraki/auth";
+import { ConnectedAgentRuntime, evaluateConnectedCausalComparison, scopeFromUnknown } from "@meraki/core";
+import { JsonConnectedRuntimeStore } from "@meraki/storage-local";
+export { ConnectedAgentRuntime } from "@meraki/core";
+export { JsonConnectedRuntimeStore } from "@meraki/storage-local";
 
 type CorrectionBody = {
   tenantId: string;
@@ -517,8 +514,6 @@ export const buildPersistentServer = async (
 // pathToFileURL keeps the executable entrypoint check correct on Windows and POSIX.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const port = Number(process.env.PORT ?? 3001);
-  const server = process.env.MERAKI_RUNTIME_PATH
-    ? await buildPersistentServer(process.env.MERAKI_RUNTIME_PATH)
-    : buildServer();
+  const server = await buildPersistentServer(process.env.MERAKI_RUNTIME_PATH ?? ".meraki/runtime.json");
   await server.listen({ port, host: "0.0.0.0" });
 }

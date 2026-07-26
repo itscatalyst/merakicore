@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { join } from "node:path";
-import { signTestJwt } from "@meraki/security";
+import { signTestJwt } from "@meraki/auth";
 import { describe, expect, it } from "vitest";
 
 describe("MCP stdio transport", () => {

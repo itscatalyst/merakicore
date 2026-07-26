@@ -3,7 +3,7 @@ import json
 from jsonschema import Draft202012Validator, FormatChecker
 from generate import ROOT, SCHEMA, OUTPUT, render
 
-EXPECTED = {"AuthContext","SourceRecord","Artifact","Event","Observation","Signal","Hypothesis","Episode","ProfileAtom","ProfileEdge","ProfileSnapshot","TaskContext","RetrievalCandidate","MerakiPack","Agent","AgentControlCommand","Run","Feedback","Outcome","Evaluation","Attribution","UpdateProposal","Goal","Experiment","ExperimentArm","Job","DeletionPreview","DeletionRequest","ExportRequest","ExportManifest","StudioEventEnvelope","GraphPage","ApiError","IdempotencyReceipt","AtomCommand","ProposalCommand","StudioOverview","RunTrace"}
+EXPECTED = {"AuthContext","SourceRecord","Artifact","Event","Observation","Signal","Hypothesis","Episode","ProfileAtom","ProfileEdge","ProfileSnapshot","TaskContext","RetrievalCandidate","MerakiPack","Agent","AgentControlCommand","Run","Feedback","Outcome","Evaluation","Attribution","UpdateProposal","Goal","Experiment","ExperimentArm","Job","DeletionPreview","DeletionRequest","ExportRequest","ExportManifest","GraphPage","ApiError","IdempotencyReceipt","AtomCommand","ProposalCommand","RunTrace"}
 schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
 Draft202012Validator.check_schema(schema)
 refs = [item["$ref"].split("/")[-1] for item in schema["oneOf"]]

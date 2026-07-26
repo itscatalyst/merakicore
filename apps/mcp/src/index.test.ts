@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ConnectedAgentRuntime } from "@meraki/api";
+import { ConnectedAgentRuntime } from "@meraki/core";
 import { MERAKI_MCP_TOOLS, MerakiMcpAdapter } from "./index.js";
 
 const context = {
