@@ -14,3 +14,12 @@ The main local flow is:
 4. `POST /v1/agent/run`
 
 Request identity fields must match the authenticated claims. Reads are filtered to the authenticated tenant and subject.
+
+Routes also enforce least-privilege scopes:
+
+- `profile:read` retrieves guidance, profile state, runs, traces, proposals, and evaluations.
+- `evidence:write` records corrections, activities, and outcomes.
+- `profile:write` creates candidates and runs governed atom or proposal commands.
+- `evaluation:write` records evaluator verdicts.
+
+The controlled comparison route requires all four because it exercises the complete learning and evaluation flow. Missing scopes return `403 insufficient_scope`; missing or invalid bearer tokens return `401`.

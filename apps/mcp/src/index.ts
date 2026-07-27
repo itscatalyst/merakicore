@@ -1,9 +1,10 @@
 import type { TaskContext } from "@meraki/contracts";
-import { ConnectedAgentRuntime } from "@meraki/core";
+import { ConnectedAgentRuntime, scopeFromUnknown } from "@meraki/core";
 import { JsonConnectedRuntimeStore } from "@meraki/storage-local";
 import {
   assertAuthenticatedIdentity,
   requestAuthenticatorFromEnvironment,
+  requireScopes,
   type AuthenticatedContext
 } from "@meraki/auth";
 
@@ -30,14 +31,7 @@ const context = (value: unknown): TaskContext => {
     !input.scope
   )
     throw new Error("TASK_CONTEXT_INCOMPLETE");
-  const scope = input.scope as TaskContext["scope"];
-  if (
-    !scope ||
-    typeof scope !== "object" ||
-    !["run", "task", "project", "mode", "domain", "workspace", "relationship", "user", "team"].includes(scope.level) ||
-    (scope.ref !== undefined && typeof scope.ref !== "string")
-  )
-    throw new Error("SCOPE_INVALID");
+  const scope = scopeFromUnknown(input.scope);
   if (
     !Array.isArray(input.constraints) ||
     !Array.isArray(input.permissions) ||
@@ -62,16 +56,20 @@ const feedback = (value: unknown) => {
   for (const key of ["tenantId", "subjectId", "actorId", "runId", "taskType", "activityType"])
     stringField(input[key], `${key.toUpperCase()}_REQUIRED`);
   stringField(input.content, "ACTIVITY_CONTENT_REQUIRED");
-  object(input.scope, "SCOPE_REQUIRED");
-  return input as Parameters<ConnectedAgentRuntime["activity"]>[0];
+  return {
+    ...input,
+    scope: scopeFromUnknown(input.scope)
+  } as Parameters<ConnectedAgentRuntime["activity"]>[0];
 };
 const outcome = (value: unknown) => {
   const input = object(value, "INVALID_OUTCOME");
   for (const key of ["tenantId", "subjectId", "runId", "outcomeType"])
     stringField(input[key], `${key.toUpperCase()}_REQUIRED`);
   object(input.outcome, "OUTCOME_REQUIRED");
-  object(input.scope, "SCOPE_REQUIRED");
-  return input as Parameters<ConnectedAgentRuntime["outcome"]>[0];
+  return {
+    ...input,
+    scope: scopeFromUnknown(input.scope)
+  } as Parameters<ConnectedAgentRuntime["outcome"]>[0];
 };
 
 /** Typed MCP-facing adapter. It exposes retrieval and evidence/outcome ingestion only; profile writes remain governed by authenticated API commands. */
@@ -90,6 +88,7 @@ export class MerakiMcpAdapter {
     try {
       switch (request.name as string) {
         case "meraki_get_guidance": {
+          requireScopes(this.authority, ["profile:read"]);
           const taskContext = context(request.arguments.context);
           assertAuthenticatedIdentity(this.authority, {
             tenantId: taskContext.tenant_id,
@@ -98,6 +97,7 @@ export class MerakiMcpAdapter {
           return { content: this.runtime.retrieve(taskContext) };
         }
         case "meraki_get_examples": {
+          requireScopes(this.authority, ["profile:read"]);
           const taskContext = context(request.arguments.context);
           assertAuthenticatedIdentity(this.authority, {
             tenantId: taskContext.tenant_id,
@@ -110,6 +110,7 @@ export class MerakiMcpAdapter {
           };
         }
         case "meraki_explain_guidance": {
+          requireScopes(this.authority, ["profile:read"]);
           const taskContext = context(request.arguments.context);
           assertAuthenticatedIdentity(this.authority, {
             tenantId: taskContext.tenant_id,
@@ -124,6 +125,7 @@ export class MerakiMcpAdapter {
           };
         }
         case "meraki_record_feedback": {
+          requireScopes(this.authority, ["evidence:write"]);
           const input = feedback(request.arguments);
           assertAuthenticatedIdentity(this.authority, input);
           const evidence = this.runtime.activity(input);
@@ -131,6 +133,7 @@ export class MerakiMcpAdapter {
           return { content: { evidence } };
         }
         case "meraki_record_outcome": {
+          requireScopes(this.authority, ["evidence:write"]);
           const input = outcome(request.arguments);
           assertAuthenticatedIdentity(this.authority, input);
           const evidence = this.runtime.outcome(input);

@@ -5,12 +5,14 @@ import type { ExplicitActivityType } from "@meraki/core";
 import {
   assertAuthenticatedIdentity,
   requestAuthenticatorFromEnvironment,
+  requireScopes,
   StaticRequestAuthenticator,
   type AuthenticatedContext,
   type RequestAuthenticator
 } from "@meraki/auth";
 import { ConnectedAgentRuntime, evaluateConnectedCausalComparison, scopeFromUnknown } from "@meraki/core";
 import { JsonConnectedRuntimeStore } from "@meraki/storage-local";
+import { dashboardHtml } from "./dashboard.js";
 export { ConnectedAgentRuntime } from "@meraki/core";
 export { JsonConnectedRuntimeStore } from "@meraki/storage-local";
 
@@ -88,16 +90,25 @@ const errorCode = (error: unknown, fallback: string): string =>
     : error instanceof Error
       ? error.message
       : fallback;
-const errorStatus = (code: string): number => {
+const errorStatus = (code: string, fallbackStatus = 422): number => {
   if (code === "invalid_token" || code === "missing_token" || code === "malformed_token") return 401;
   if (code === "identity_mismatch" || code === "insufficient_scope") return 403;
   if (code.includes("NOT_FOUND")) return 404;
   if (code.includes("VERSION_CONFLICT") || code.includes("NOT_PENDING") || code.includes("NOT_APPLIED")) return 409;
-  return 422;
+  return fallbackStatus;
 };
-const sendError = (reply: FastifyReply, error: unknown, fallback: string) => {
+const sendError = (reply: FastifyReply, error: unknown, fallback: string, fallbackStatus = 422) => {
   const code = errorCode(error, fallback);
-  return reply.code(errorStatus(code)).send({ error: code });
+  const frameworkStatus =
+    typeof error === "object" &&
+    error &&
+    "statusCode" in error &&
+    typeof (error as { statusCode?: unknown }).statusCode === "number"
+      ? (error as { statusCode: number }).statusCode
+      : undefined;
+  return reply.code(frameworkStatus ?? errorStatus(code, fallbackStatus)).send({
+    error: fallbackStatus === 500 && frameworkStatus === undefined && errorStatus(code, 500) === 500 ? fallback : code
+  });
 };
 const record = (value: unknown, code: string): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(code);
@@ -109,6 +120,15 @@ const required = (value: unknown, code: string): string =>
     : (() => {
         throw new Error(code);
       })();
+const boundedListLimit = (value: unknown): number | undefined => {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !/^\d+$/u.test(value)) throw new Error("LIST_LIMIT_INVALID");
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 1000) throw new Error("LIST_LIMIT_INVALID");
+  return parsed;
+};
+const updateProposalCommands = new Set(["approve", "reject", "rollback"]);
+const atomCommands = new Set(["confirm", "edit", "rescope", "limit", "revoke", "supersede", "weaken", "split"]);
 const validateIdentity = (value: unknown): void => {
   const input = record(value, "REQUEST_OBJECT_REQUIRED");
   required(input.tenantId, "TENANT_ID_REQUIRED");
@@ -162,23 +182,38 @@ export const buildServer = (
   const authenticator =
     "authenticate" in authentication ? authentication : new StaticRequestAuthenticator(authentication);
   const requestContexts = new WeakMap<FastifyRequest, AuthenticatedContext>();
-  const contextFor = (request: FastifyRequest): AuthenticatedContext => {
+  const contextFor = (request: FastifyRequest, scopes: readonly string[] = []): AuthenticatedContext => {
     const context = requestContexts.get(request);
     if (context === undefined) throw new Error("AUTHENTICATED_CONTEXT_REQUIRED");
-    return context;
+    return requireScopes(context, scopes);
   };
   const server = Fastify({
     logger: process.env.NODE_ENV !== "test",
     bodyLimit: 1_048_576,
     requestIdHeader: "x-request-id"
   });
+  server.setErrorHandler((error, _request, reply) => sendError(reply, error, "REQUEST_FAILED", 500));
   server.get("/health", () => ({
     status: "ok",
     service: "meraki-core",
     contract_version: "0.1.0"
   }));
+  server.get("/dashboard", (_request, reply) =>
+    reply
+      .header(
+        "content-security-policy",
+        "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+      )
+      .header("cache-control", "no-store")
+      .header("referrer-policy", "no-referrer")
+      .header("x-content-type-options", "nosniff")
+      .header("cross-origin-opener-policy", "same-origin")
+      .type("text/html; charset=utf-8")
+      .send(dashboardHtml)
+  );
   server.addHook("onRequest", async (request, reply) => {
-    if (request.url === "/health") return;
+    const pathname = request.url.split("?", 1)[0];
+    if (pathname === "/health" || pathname === "/dashboard") return;
     try {
       requestContexts.set(request, await authenticator.authenticate(request.headers.authorization));
     } catch (error) {
@@ -188,7 +223,7 @@ export const buildServer = (
   server.post<{ Body: CorrectionBody }>("/v1/corrections", async (request, reply) => {
     try {
       validateCorrection(request.body);
-      const context = contextFor(request);
+      const context = contextFor(request, ["evidence:write"]);
       assertAuthenticatedIdentity(context, request.body);
       const evidence = runtime.correction({
         ...request.body,
@@ -205,7 +240,7 @@ export const buildServer = (
   server.post<{ Body: ActivityBody }>("/v1/activity", async (request, reply) => {
     try {
       validateActivity(request.body);
-      const context = contextFor(request);
+      const context = contextFor(request, ["evidence:write"]);
       assertAuthenticatedIdentity(context, request.body);
       return reply.code(201).send({
         evidence: runtime.activity({
@@ -223,7 +258,7 @@ export const buildServer = (
   server.post<{ Body: OutcomeBody }>("/v1/outcomes", async (request, reply) => {
     try {
       validateOutcome(request.body);
-      const context = contextFor(request);
+      const context = contextFor(request, ["evidence:write"]);
       assertAuthenticatedIdentity(context, request.body);
       return reply.code(201).send({
         evidence: runtime.outcome({
@@ -240,7 +275,7 @@ export const buildServer = (
   server.post<{ Body: ActivityLessonBody }>("/v1/learning/candidates", async (request, reply) => {
     try {
       const sourceTrace = runtime.learningTrace(request.body.event_id);
-      assertAuthenticatedIdentity(contextFor(request), {
+      assertAuthenticatedIdentity(contextFor(request, ["profile:write"]), {
         tenantId: sourceTrace.event.tenant_id,
         subjectId: sourceTrace.event.subject_id
       });
@@ -259,7 +294,7 @@ export const buildServer = (
   server.post<{ Body: RunBody }>("/v1/agent/run", async (request, reply) => {
     try {
       validateRun(request.body);
-      const context = contextFor(request);
+      const context = contextFor(request, ["profile:read"]);
       assertAuthenticatedIdentity(context, {
         tenantId: request.body.context.tenant_id,
         subjectId: request.body.context.subject_id
@@ -279,7 +314,7 @@ export const buildServer = (
     }
   });
   server.get("/v1/profile/atoms", (request) => {
-    const context = contextFor(request);
+    const context = contextFor(request, ["profile:read"]);
     return {
       items: runtime
         .profileAtoms()
@@ -289,7 +324,7 @@ export const buildServer = (
   server.get<{ Params: { eventId: string } }>("/v1/learning/trace/:eventId", async (request, reply) => {
     try {
       const trace = runtime.learningTrace(request.params.eventId);
-      assertAuthenticatedIdentity(contextFor(request), {
+      assertAuthenticatedIdentity(contextFor(request, ["profile:read"]), {
         tenantId: trace.event.tenant_id,
         subjectId: trace.event.subject_id
       });
@@ -301,7 +336,7 @@ export const buildServer = (
   server.get<{ Params: { id: string } }>("/v1/profile/atoms/:id/trace", async (request, reply) => {
     try {
       const trace = runtime.learningTraceForAtom(request.params.id);
-      assertAuthenticatedIdentity(contextFor(request), {
+      assertAuthenticatedIdentity(contextFor(request, ["profile:read"]), {
         tenantId: trace.event.tenant_id,
         subjectId: trace.event.subject_id
       });
@@ -311,7 +346,7 @@ export const buildServer = (
     }
   });
   server.get("/v1/update-proposals", (request) => {
-    const context = contextFor(request);
+    const context = contextFor(request, ["profile:read"]);
     return {
       items: runtime
         .updateProposals()
@@ -320,7 +355,7 @@ export const buildServer = (
   });
   server.post<{ Body: UpdateProposalBody }>("/v1/update-proposals", async (request, reply) => {
     try {
-      assertOwnedAtom(runtime, contextFor(request), request.body.lesson_id);
+      assertOwnedAtom(runtime, contextFor(request, ["profile:write"]), request.body.lesson_id);
       return reply.code(201).send({
         proposal: runtime.proposeUpdate(request.body.lesson_id, request.body.evidence_event_id, request.body.operation)
       });
@@ -332,9 +367,10 @@ export const buildServer = (
     "/v1/update-proposals/:id/commands",
     async (request, reply) => {
       try {
+        if (!updateProposalCommands.has(request.body.operation)) throw new Error("UPDATE_PROPOSAL_OPERATION_INVALID");
         const proposal = runtime.updateProposals().find((candidate) => candidate.id === request.params.id);
         if (proposal === undefined) return reply.code(404).send({ error: "UPDATE_PROPOSAL_NOT_FOUND" });
-        assertAuthenticatedIdentity(contextFor(request), {
+        assertAuthenticatedIdentity(contextFor(request, ["profile:write"]), {
           tenantId: proposal.tenant_id,
           subjectId: proposal.subject_id
         });
@@ -350,16 +386,27 @@ export const buildServer = (
       }
     }
   );
-  server.get("/v1/runs", (request) => {
-    const context = contextFor(request);
-    return {
-      items: runtime
+  server.get<{ Querystring: { limit?: string } }>("/v1/runs", async (request, reply) => {
+    try {
+      const context = contextFor(request, ["profile:read"]);
+      const limit = boundedListLimit(request.query.limit);
+      const visible = runtime
         .recentRuns()
-        .filter((run) => run.context.tenant_id === context.tenantId && run.context.subject_id === context.subjectId)
-    };
+        .filter((run) => run.context.tenant_id === context.tenantId && run.context.subject_id === context.subjectId);
+      return reply.send({
+        items: limit === undefined ? visible : visible.slice(0, limit),
+        total: visible.length,
+        summary: {
+          guidance_applied: visible.filter((record) => record.run.trace.changed).length,
+          baseline_preserved: visible.filter((record) => !record.run.trace.changed).length
+        }
+      });
+    } catch (error) {
+      return sendError(reply, error, "INVALID_RUN_LIST");
+    }
   });
   server.get("/v1/evaluations", (request) => {
-    const context = contextFor(request);
+    const context = contextFor(request, ["profile:read"]);
     return {
       items: runtime
         .evaluations()
@@ -372,7 +419,7 @@ export const buildServer = (
   server.post<{ Body: CausalEvaluationBody }>("/v1/evaluations/causal", async (request, reply) => {
     try {
       const input = request.body;
-      const context = contextFor(request);
+      const context = contextFor(request, ["evidence:write", "profile:read", "profile:write", "evaluation:write"]);
       assertAuthenticatedIdentity(context, input.correction);
       assertAuthenticatedIdentity(context, {
         tenantId: input.related.context.tenant_id,
@@ -419,7 +466,7 @@ export const buildServer = (
     try {
       const run = runtime.getRun(request.body.run_id);
       if (run === undefined) return reply.code(404).send({ error: "RUN_NOT_FOUND" });
-      assertAuthenticatedIdentity(contextFor(request), {
+      assertAuthenticatedIdentity(contextFor(request, ["evaluation:write"]), {
         tenantId: run.context.tenant_id,
         subjectId: run.context.subject_id
       });
@@ -454,7 +501,7 @@ export const buildServer = (
   server.get<{ Params: { runId: string } }>("/v1/runs/:runId", async (request, reply) => {
     const run = runtime.getRun(request.params.runId);
     if (run === undefined) return reply.code(404).send({ error: "RUN_NOT_FOUND" });
-    assertAuthenticatedIdentity(contextFor(request), {
+    assertAuthenticatedIdentity(contextFor(request, ["profile:read"]), {
       tenantId: run.context.tenant_id,
       subjectId: run.context.subject_id
     });
@@ -464,8 +511,9 @@ export const buildServer = (
     "/v1/profile/atoms/:id/commands",
     async (request, reply) => {
       try {
-        assertOwnedAtom(runtime, contextFor(request), request.params.id);
+        assertOwnedAtom(runtime, contextFor(request, ["profile:write"]), request.params.id);
         const { operation, expected_version, claim, mode } = request.body;
+        if (!atomCommands.has(operation)) throw new Error("ATOM_OPERATION_INVALID");
         if (request.body.atom_id !== request.params.id) throw new Error("ATOM_ID_MISMATCH");
         if (operation === "split")
           return reply.send({ atoms: runtime.split(request.params.id, request.body.claims ?? [], expected_version) });
@@ -505,7 +553,18 @@ export const buildPersistentServer = async (
   const store = new JsonConnectedRuntimeStore(path);
   const runtime = await store.load();
   const server = buildServer(runtime, authentication);
+  let saveQueue = Promise.resolve();
+  const save = (): Promise<void> => {
+    const queued = saveQueue.catch(() => undefined).then(() => store.save(runtime));
+    saveQueue = queued;
+    return queued;
+  };
+  server.addHook("onSend", async (request, reply, payload) => {
+    if (request.method !== "GET" && request.method !== "HEAD" && reply.statusCode < 400) await save();
+    return payload;
+  });
   server.addHook("onClose", async () => {
+    await saveQueue.catch(() => undefined);
     await store.save(runtime);
   });
   return server;

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { canonicalJson } from "../domain/index.js";
+import { canonicalJson, parseScope } from "../domain/index.js";
 import type {
   Consent,
   Event,
@@ -125,7 +125,13 @@ export class EvidenceLedger {
   private readonly outcomeDeduplication = new Map<string, EvidenceChain>();
 
   ingestExplicitCorrection(input: ExplicitCorrectionInput): EvidenceChain {
-    if (!input.original.trim() || !input.correction.trim()) throw new Error("CORRECTION_TEXT_REQUIRED");
+    if (
+      typeof input.original !== "string" ||
+      typeof input.correction !== "string" ||
+      !input.original.trim() ||
+      !input.correction.trim()
+    )
+      throw new Error("CORRECTION_TEXT_REQUIRED");
     return this.ingestActivity(
       {
         ...input,
@@ -142,8 +148,8 @@ export class EvidenceLedger {
   }
 
   private ingestActivity(input: ExplicitActivityInput, allowCanonicalPayload: boolean): EvidenceChain {
-    this.validateActivity(input, allowCanonicalPayload);
-    if (!input.content.trim()) throw new Error("ACTIVITY_CONTENT_REQUIRED");
+    const scope = this.validateActivity(input, allowCanonicalPayload);
+    if (typeof input.content !== "string" || !input.content.trim()) throw new Error("ACTIVITY_CONTENT_REQUIRED");
     const consent = input.consent ?? defaultConsent();
     if (consent.status !== "granted") throw new Error("CONSENT_REQUIRED");
     const key = digest(
@@ -155,7 +161,7 @@ export class EvidenceLedger {
         taskType: input.taskType,
         activityType: input.activityType,
         content: input.content,
-        scope: input.scope,
+        scope,
         ...(input.mode === undefined ? {} : { mode: input.mode }),
         payload: input.payload ?? {}
       })
@@ -164,7 +170,8 @@ export class EvidenceLedger {
     if (existing) return existing;
 
     const recordedAt = now();
-    const securityFlags = isPromptInjectionSuspected(input.content) ? ["prompt_injection_suspected"] : [];
+    const reviewText = `${input.content}\n${canonicalJson(input.payload ?? {})}`;
+    const securityFlags = isPromptInjectionSuspected(reviewText) ? ["prompt_injection_suspected"] : [];
     const source: SourceRecord = deepFreeze({
       contract: "source_record",
       id: randomUUID(),
@@ -190,7 +197,7 @@ export class EvidenceLedger {
         run_id: input.runId,
         task_type: input.taskType,
         content: input.content,
-        scope: input.scope,
+        scope,
         ...(input.mode === undefined ? {} : { mode: input.mode }),
         ...(input.payload ?? {}),
         ...(securityFlags.length ? { security_flags: securityFlags } : {})
@@ -206,7 +213,7 @@ export class EvidenceLedger {
   }
 
   ingestObjectiveOutcome(input: ObjectiveOutcomeInput): EvidenceChain {
-    this.validateOutcome(input);
+    const scope = this.validateOutcome(input);
     const key = digest(
       canonicalJson({
         tenantId: input.tenantId,
@@ -214,7 +221,7 @@ export class EvidenceLedger {
         runId: input.runId,
         outcomeType: input.outcomeType,
         outcome: input.outcome,
-        scope: input.scope,
+        scope,
         ...(input.mode === undefined ? {} : { mode: input.mode })
       })
     );
@@ -222,6 +229,7 @@ export class EvidenceLedger {
     if (existing) return existing;
     const recordedAt = now();
     const content = canonicalJson(input.outcome);
+    const securityFlags = isPromptInjectionSuspected(content) ? ["prompt_injection_suspected"] : [];
     const source: SourceRecord = deepFreeze({
       contract: "source_record",
       id: randomUUID(),
@@ -246,8 +254,9 @@ export class EvidenceLedger {
         run_id: input.runId,
         outcome_type: input.outcomeType,
         outcome: input.outcome,
-        scope: input.scope,
-        ...(input.mode === undefined ? {} : { mode: input.mode })
+        scope,
+        ...(input.mode === undefined ? {} : { mode: input.mode }),
+        ...(securityFlags.length ? { security_flags: securityFlags } : {})
       },
       evidence_spans: [evidenceRef("pending", content)]
     });
@@ -260,7 +269,16 @@ export class EvidenceLedger {
   }
 
   ingestModelOutput(input: ModelOutputInput): EvidenceChain {
-    if (!input.output.trim()) throw new Error("MODEL_OUTPUT_REQUIRED");
+    const fields = [
+      [input.tenantId, "TENANT_ID_REQUIRED"],
+      [input.subjectId, "SUBJECT_ID_REQUIRED"],
+      [input.runId, "RUN_ID_REQUIRED"]
+    ] as const;
+    for (const [value, code] of fields) if (typeof value !== "string" || !value.trim()) throw new Error(code);
+    if (typeof input.output !== "string" || !input.output.trim()) throw new Error("MODEL_OUTPUT_REQUIRED");
+    if (input.mode !== undefined && (typeof input.mode !== "string" || !input.mode.trim()))
+      throw new Error("MODE_INVALID");
+    const scope = parseScope(input.scope);
     const recordedAt = now();
     const source: SourceRecord = deepFreeze({
       contract: "source_record",
@@ -285,7 +303,7 @@ export class EvidenceLedger {
       payload: {
         run_id: input.runId,
         output: input.output,
-        scope: input.scope,
+        scope,
         ...(input.mode === undefined ? {} : { mode: input.mode })
       },
       evidence_spans: [evidenceRef("pending", input.output)]
@@ -351,6 +369,7 @@ export class EvidenceLedger {
 
   signalExplicitActivity(observationId: string, scope: Scope, kind = "explicit_activity"): Signal {
     const observation = this.requireObservation(observationId);
+    const parsedScope = parseScope(scope);
     const existing = [...this.signals.values()].find(
       (signal) =>
         signal.observation_ids.length === 1 && signal.observation_ids[0] === observationId && signal.kind === kind
@@ -363,7 +382,7 @@ export class EvidenceLedger {
       subject_id: observation.subject_id,
       observation_ids: [observation.id],
       kind,
-      scope,
+      scope: parsedScope,
       support: 1,
       counterevidence: 0,
       confidence: 1,
@@ -393,7 +412,7 @@ export class EvidenceLedger {
       claim,
       scope: signal.scope,
       evidence: [evidenceRef(event.id, content)],
-      alternatives: [],
+      alternatives: ["The observed behavior was situational rather than a durable preference."],
       falsifier: "A later explicit correction, rejection, or scoped counterexample contradicts this claim.",
       confidence: signal.confidence,
       created_at: now()
@@ -437,19 +456,92 @@ export class EvidenceLedger {
   }
   static fromSnapshot(snapshot: EvidenceLedgerSnapshot): EvidenceLedger {
     const ledger = new EvidenceLedger();
-    for (const source of snapshot.sources) ledger.sources.set(source.id, deepFreeze(source));
-    for (const event of snapshot.events) ledger.events.set(event.id, deepFreeze(event));
-    for (const observation of snapshot.observations) ledger.observations.set(observation.id, deepFreeze(observation));
-    for (const signal of snapshot.signals) ledger.signals.set(signal.id, deepFreeze(signal));
-    for (const hypothesis of snapshot.hypotheses) ledger.hypotheses.set(hypothesis.id, deepFreeze(hypothesis));
-    for (const item of snapshot.activityDeduplication)
-      ledger.activityDeduplication.set(item.key, deepFreeze(item.chain));
-    for (const item of snapshot.outcomeDeduplication ?? [])
-      ledger.outcomeDeduplication.set(item.key, deepFreeze(item.chain));
+    for (const source of snapshot.sources) {
+      if (
+        ledger.sources.has(source.id) ||
+        typeof source.tenant_id !== "string" ||
+        !source.tenant_id.trim() ||
+        typeof source.subject_id !== "string" ||
+        !source.subject_id.trim()
+      )
+        throw new Error("SNAPSHOT_SOURCE_INVALID");
+      ledger.sources.set(source.id, deepFreeze(source));
+    }
+    for (const event of snapshot.events) {
+      const source = ledger.sources.get(event.source_id);
+      if (
+        ledger.events.has(event.id) ||
+        !source ||
+        source.tenant_id !== event.tenant_id ||
+        source.subject_id !== event.subject_id
+      )
+        throw new Error("SNAPSHOT_EVENT_LINEAGE_INVALID");
+      parseScope(event.payload.scope);
+      ledger.events.set(event.id, deepFreeze(event));
+    }
+    for (const observation of snapshot.observations) {
+      if (ledger.observations.has(observation.id)) throw new Error("SNAPSHOT_OBSERVATION_LINEAGE_INVALID");
+      const events = observation.event_ids.map((id) => ledger.events.get(id));
+      if (
+        events.some(
+          (event) => !event || event.tenant_id !== observation.tenant_id || event.subject_id !== observation.subject_id
+        )
+      )
+        throw new Error("SNAPSHOT_OBSERVATION_LINEAGE_INVALID");
+      if (
+        events.some(
+          (event) =>
+            event &&
+            Array.isArray(event.payload.security_flags) &&
+            event.payload.security_flags.includes("prompt_injection_suspected")
+        )
+      )
+        throw new Error("SNAPSHOT_OBSERVATION_SECURITY_INVALID");
+      ledger.observations.set(observation.id, deepFreeze(observation));
+    }
+    for (const signal of snapshot.signals) {
+      if (ledger.signals.has(signal.id)) throw new Error("SNAPSHOT_SIGNAL_LINEAGE_INVALID");
+      parseScope(signal.scope);
+      const observations = signal.observation_ids.map((id) => ledger.observations.get(id));
+      if (
+        observations.some(
+          (observation) =>
+            !observation || observation.tenant_id !== signal.tenant_id || observation.subject_id !== signal.subject_id
+        )
+      )
+        throw new Error("SNAPSHOT_SIGNAL_LINEAGE_INVALID");
+      ledger.signals.set(signal.id, deepFreeze(signal));
+    }
+    for (const hypothesis of snapshot.hypotheses) {
+      if (ledger.hypotheses.has(hypothesis.id)) throw new Error("SNAPSHOT_HYPOTHESIS_LINEAGE_INVALID");
+      parseScope(hypothesis.scope);
+      if (
+        hypothesis.evidence.some((reference) => {
+          const event = ledger.events.get(reference.event_id);
+          return !event || event.tenant_id !== hypothesis.tenant_id || event.subject_id !== hypothesis.subject_id;
+        })
+      )
+        throw new Error("SNAPSHOT_HYPOTHESIS_LINEAGE_INVALID");
+      ledger.hypotheses.set(hypothesis.id, deepFreeze(hypothesis));
+    }
+    const restoreDeduplication = (
+      items: EvidenceLedgerSnapshot["activityDeduplication"],
+      target: Map<string, EvidenceChain>
+    ): void => {
+      for (const item of items) {
+        const source = ledger.sources.get(item.chain.source.id);
+        const event = ledger.events.get(item.chain.event.id);
+        if (!source || !event || event.source_id !== source.id || target.has(item.key))
+          throw new Error("SNAPSHOT_DEDUPLICATION_INVALID");
+        target.set(item.key, deepFreeze({ source, event }));
+      }
+    };
+    restoreDeduplication(snapshot.activityDeduplication ?? [], ledger.activityDeduplication);
+    restoreDeduplication(snapshot.outcomeDeduplication ?? [], ledger.outcomeDeduplication);
     return ledger;
   }
 
-  private validateActivity(input: ExplicitActivityInput, allowCanonicalPayload: boolean): void {
+  private validateActivity(input: ExplicitActivityInput, allowCanonicalPayload: boolean): Scope {
     const fields = [
       [input.tenantId, "TENANT_ID_REQUIRED"],
       [input.subjectId, "SUBJECT_ID_REQUIRED"],
@@ -464,15 +556,14 @@ export class EvidenceLedger {
       ).includes(input.activityType)
     )
       throw new Error("ACTIVITY_TYPE_INVALID");
+    const scope = parseScope(input.scope);
+    if (input.mode !== undefined && (typeof input.mode !== "string" || !input.mode.trim()))
+      throw new Error("MODE_INVALID");
     if (
-      !input.scope ||
-      typeof input.scope !== "object" ||
-      typeof input.scope.level !== "string" ||
-      !input.scope.level.trim() ||
-      typeof input.scope.ref !== "string" ||
-      !input.scope.ref.trim()
+      input.payload !== undefined &&
+      (!input.payload || typeof input.payload !== "object" || Array.isArray(input.payload))
     )
-      throw new Error("SCOPE_REQUIRED");
+      throw new Error("ACTIVITY_PAYLOAD_INVALID");
     const reserved = new Set([
       "actor_id",
       "run_id",
@@ -487,9 +578,10 @@ export class EvidenceLedger {
     ]);
     if (!allowCanonicalPayload && input.payload && Object.keys(input.payload).some((key) => reserved.has(key)))
       throw new Error("RESERVED_ACTIVITY_PAYLOAD_FIELD");
+    return scope;
   }
 
-  private validateOutcome(input: ObjectiveOutcomeInput): void {
+  private validateOutcome(input: ObjectiveOutcomeInput): Scope {
     const fields = [
       [input.tenantId, "TENANT_ID_REQUIRED"],
       [input.subjectId, "SUBJECT_ID_REQUIRED"],
@@ -499,15 +591,9 @@ export class EvidenceLedger {
     for (const [value, code] of fields) if (typeof value !== "string" || !value.trim()) throw new Error(code);
     if (!input.outcome || typeof input.outcome !== "object" || Array.isArray(input.outcome))
       throw new Error("OUTCOME_REQUIRED");
-    if (
-      !input.scope ||
-      typeof input.scope !== "object" ||
-      typeof input.scope.level !== "string" ||
-      !input.scope.level.trim() ||
-      typeof input.scope.ref !== "string" ||
-      !input.scope.ref.trim()
-    )
-      throw new Error("SCOPE_REQUIRED");
+    if (input.mode !== undefined && (typeof input.mode !== "string" || !input.mode.trim()))
+      throw new Error("MODE_INVALID");
+    return parseScope(input.scope);
   }
 
   private requireSource(id: string): SourceRecord {

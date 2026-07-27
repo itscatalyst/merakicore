@@ -9,6 +9,7 @@ import {
   type UpdateOperation
 } from "../learning/index.js";
 import type { ExplicitActivityInput, ObjectiveOutcomeInput } from "../evidence/index.js";
+import { canonicalJson, parseScope } from "../domain/index.js";
 
 export type AgentRunInput = {
   context: TaskContext;
@@ -98,6 +99,73 @@ const evaluationPriority = (evaluatorClass: Evaluation["evaluator_class"]): numb
 const effectFromResult = (result: Evaluation["result"]): number => (result === "win" ? 1 : result === "loss" ? -1 : 0);
 const digest = (value: string): `sha256:${string}` => `sha256:${createHash("sha256").update(value).digest("hex")}`;
 const tokenCount = (value: string): number => (value.trim() ? value.trim().split(/\s+/).length : 0);
+const deepFreeze = <T>(value: T): T => {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const nested of Object.values(value as Record<string, unknown>)) deepFreeze(nested);
+  }
+  return value;
+};
+const normalizeTaskContext = (context: TaskContext): TaskContext => {
+  if (!context || typeof context !== "object" || context.contract !== "task_context")
+    throw new Error("TASK_CONTEXT_INVALID");
+  if (typeof context.tenant_id !== "string" || !context.tenant_id.trim()) throw new Error("TENANT_ID_REQUIRED");
+  if (typeof context.subject_id !== "string" || !context.subject_id.trim()) throw new Error("SUBJECT_ID_REQUIRED");
+  if (typeof context.task_id !== "string" || !context.task_id.trim()) throw new Error("TASK_ID_REQUIRED");
+  if (typeof context.task_type !== "string" || !context.task_type.trim()) throw new Error("TASK_TYPE_REQUIRED");
+  if (
+    !Array.isArray(context.constraints) ||
+    context.constraints.some((value) => typeof value !== "string") ||
+    !Array.isArray(context.permissions) ||
+    context.permissions.some((value) => typeof value !== "string") ||
+    new Set(context.permissions).size !== context.permissions.length ||
+    !Number.isInteger(context.token_budget) ||
+    context.token_budget < 0 ||
+    (context.mode !== undefined && typeof context.mode !== "string") ||
+    (context.goal_id !== undefined && typeof context.goal_id !== "string")
+  )
+    throw new Error("TASK_CONTEXT_INVALID");
+  return {
+    contract: "task_context",
+    tenant_id: context.tenant_id,
+    subject_id: context.subject_id,
+    task_id: context.task_id,
+    task_type: context.task_type,
+    scope: parseScope(context.scope),
+    ...(context.mode === undefined ? {} : { mode: context.mode }),
+    ...(context.goal_id === undefined ? {} : { goal_id: context.goal_id }),
+    constraints: [...context.constraints],
+    permissions: [...context.permissions],
+    token_budget: context.token_budget
+  };
+};
+const assertEvaluationInput = (input: EvaluationInput): void => {
+  const identifiers = [
+    [input.runId, "RUN_ID_REQUIRED"],
+    [input.experimentId, "EXPERIMENT_ID_REQUIRED"],
+    [input.armId, "ARM_ID_REQUIRED"]
+  ] as const;
+  for (const [value, code] of identifiers) if (typeof value !== "string" || !value.trim()) throw new Error(code);
+  if (!["human_blind", "objective", "model_weak"].includes(input.evaluatorClass))
+    throw new Error("EVALUATOR_CLASS_INVALID");
+  if (!["win", "loss", "tie", "abstain"].includes(input.result)) throw new Error("EVALUATION_RESULT_INVALID");
+  if (
+    !input.criteria ||
+    typeof input.criteria !== "object" ||
+    Array.isArray(input.criteria) ||
+    ![Object.prototype, null].includes(Object.getPrototypeOf(input.criteria) as object | null) ||
+    Object.values(input.criteria).some((value) => typeof value !== "number" || !Number.isFinite(value))
+  )
+    throw new Error("EVALUATION_CRITERIA_INVALID");
+  if (!Number.isFinite(input.uncertainty) || input.uncertainty < 0 || input.uncertainty > 1)
+    throw new Error("EVALUATION_UNCERTAINTY_INVALID");
+  if (
+    input.evaluatorIdentityDigest !== undefined &&
+    (typeof input.evaluatorIdentityDigest !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(input.evaluatorIdentityDigest))
+  )
+    throw new Error("EVALUATOR_IDENTITY_DIGEST_INVALID");
+  if (input.reason !== undefined && typeof input.reason !== "string") throw new Error("EVALUATION_REASON_INVALID");
+};
 /** Objective contract: guidance counts only when rendered in the explicit guidance
  * channel, never merely because the baseline happens to contain the same text. */
 const containsExpectedGuidance = (output: string, guidance: string): boolean =>
@@ -108,6 +176,13 @@ const containsExpectedGuidance = (output: string, guidance: string): boolean =>
         (line.startsWith("Meraki guidance applied: ") || line.startsWith("Raw memory applied: ")) &&
         line.slice(line.indexOf(": ") + 2) === guidance
     );
+const expectedPackHash = (pack: MerakiPack): `sha256:${string}` => {
+  const { contract, id, hash, ...payload } = pack;
+  void id;
+  void hash;
+  if (contract !== "meraki_pack") throw new Error("SNAPSHOT_RUN_LINEAGE_INVALID");
+  return digest(canonicalJson(payload));
+};
 
 /** Adapter-neutral connected-agent runtime. A model adapter can replace render() while retaining the Meraki trace. */
 export class ConnectedAgentRuntime {
@@ -133,7 +208,10 @@ export class ConnectedAgentRuntime {
   }
 
   run(input: AgentRunInput): AgentRunResult {
-    const retrieved = this.engine.retrieve(input.context);
+    if (typeof input.request !== "string" || !input.request.trim()) throw new Error("REQUEST_REQUIRED");
+    if (typeof input.baseline !== "string") throw new Error("BASELINE_REQUIRED");
+    const context = normalizeTaskContext(input.context);
+    const retrieved = this.engine.retrieve(context);
     const guidance = retrieved.pack.items.map((item) => item.guidance).join(" ");
     const output = guidance ? `${input.baseline}\nMeraki guidance applied: ${guidance}` : input.baseline;
     const runId = randomUUID();
@@ -161,11 +239,11 @@ export class ConnectedAgentRuntime {
           atoms.find((atom) => atom.id === manifest.id)?.evidence.map((evidence) => evidence.event_id) ?? []
       }))
     };
-    const result = { output, baseline: input.baseline, pack: retrieved.pack, trace };
+    const result = deepFreeze({ output, baseline: input.baseline, pack: retrieved.pack, trace });
     this.runLedger.push(
-      Object.freeze({
+      deepFreeze({
         run: result,
-        context: Object.freeze({ ...input.context }),
+        context,
         request: input.request,
         recordedAt: new Date().toISOString()
       })
@@ -175,8 +253,11 @@ export class ConnectedAgentRuntime {
 
   /** Equal-token raw-memory control: deliberately bypasses Meraki retrieval and may leak across contexts. */
   runRawMemory(input: AgentRunInput, rawMemory: string): AgentRunResult {
-    if (!rawMemory.trim()) throw new Error("RAW_MEMORY_REQUIRED");
-    const retrieved = this.engine.retrieve(input.context);
+    if (typeof input.request !== "string" || !input.request.trim()) throw new Error("REQUEST_REQUIRED");
+    if (typeof input.baseline !== "string") throw new Error("BASELINE_REQUIRED");
+    if (typeof rawMemory !== "string" || !rawMemory.trim()) throw new Error("RAW_MEMORY_REQUIRED");
+    const context = normalizeTaskContext(input.context);
+    const retrieved = this.engine.retrieve(context);
     const runId = randomUUID();
     const output = `${input.baseline}\nRaw memory applied: ${rawMemory}`;
     const trace: AgentTrace = {
@@ -190,11 +271,11 @@ export class ConnectedAgentRuntime {
       candidates: [],
       provenance: []
     };
-    const result = { output, baseline: input.baseline, pack: retrieved.pack, trace };
+    const result = deepFreeze({ output, baseline: input.baseline, pack: retrieved.pack, trace });
     this.runLedger.push(
-      Object.freeze({
+      deepFreeze({
         run: result,
-        context: Object.freeze({ ...input.context }),
+        context,
         request: input.request,
         recordedAt: new Date().toISOString()
       })
@@ -203,10 +284,10 @@ export class ConnectedAgentRuntime {
   }
 
   recordEvaluation(input: EvaluationInput): RecordedEvaluation {
-    if (input.uncertainty < 0 || input.uncertainty > 1) throw new Error("EVALUATION_UNCERTAINTY_INVALID");
+    assertEvaluationInput(input);
     const run = this.getRun(input.runId);
     if (!run) throw new Error("RUN_NOT_FOUND");
-    const evaluation: Evaluation = Object.freeze({
+    const evaluation: Evaluation = deepFreeze({
       contract: "evaluation",
       id: randomUUID(),
       tenant_id: run.context.tenant_id,
@@ -217,7 +298,7 @@ export class ConnectedAgentRuntime {
       ...(input.evaluatorIdentityDigest === undefined
         ? {}
         : { evaluator_identity_digest: input.evaluatorIdentityDigest as `sha256:${string}` }),
-      criteria: input.criteria,
+      criteria: { ...input.criteria },
       result: input.result,
       ...(input.reason === undefined ? {} : { reason: input.reason }),
       uncertainty: input.uncertainty,
@@ -225,7 +306,7 @@ export class ConnectedAgentRuntime {
     });
     const target = run.run.trace.candidates.find((candidate) => candidate.decision === "included");
     const attribution = target
-      ? Object.freeze({
+      ? deepFreeze({
           contract: "attribution" as const,
           id: randomUUID(),
           tenant_id: evaluation.tenant_id,
@@ -249,7 +330,7 @@ export class ConnectedAgentRuntime {
         const index = this.evaluationLedger.indexOf(entry);
         this.evaluationLedger[index] = Object.freeze({ ...entry, effective: false });
       }
-    const recorded = Object.freeze({
+    const recorded = deepFreeze({
       runId: input.runId,
       evaluation,
       ...(attribution === undefined ? {} : { attribution }),
@@ -260,7 +341,7 @@ export class ConnectedAgentRuntime {
   }
 
   retrieve(context: TaskContext) {
-    return this.engine.retrieve(context);
+    return this.engine.retrieve(normalizeTaskContext(context));
   }
   approve(lessonId: string, expectedVersion = 1) {
     return this.engine.approve(lessonId, expectedVersion);
@@ -322,8 +403,96 @@ export class ConnectedAgentRuntime {
   static fromSnapshot(snapshot: ConnectedRuntimeSnapshot | LearningEngineSnapshot): ConnectedAgentRuntime {
     if (!("engine" in snapshot)) return new ConnectedAgentRuntime(LearningEngine.fromSnapshot(snapshot));
     const runtime = new ConnectedAgentRuntime(LearningEngine.fromSnapshot(snapshot.engine));
-    runtime.runLedger.push(...snapshot.runs);
-    runtime.evaluationLedger.push(...snapshot.evaluations);
+    const runIds = new Set<string>();
+    for (const record of snapshot.runs) {
+      const context = normalizeTaskContext(record.context);
+      const { run } = record;
+      const rawMemory = run.trace.packId.startsWith("raw-memory:");
+      const renderedGuidance = run.pack.items.map((item) => item.guidance).join(" ");
+      const expectedOutput = renderedGuidance
+        ? `${run.baseline}\nMeraki guidance applied: ${renderedGuidance}`
+        : run.baseline;
+      if (
+        runIds.has(run.trace.runId) ||
+        typeof record.request !== "string" ||
+        !record.request.trim() ||
+        typeof run.baseline !== "string" ||
+        typeof run.output !== "string" ||
+        run.trace.changed !== (run.output !== run.baseline) ||
+        run.pack.tenant_id !== context.tenant_id ||
+        run.pack.subject_id !== context.subject_id ||
+        run.trace.taskContextDigest !== digest(canonicalJson(context)) ||
+        run.trace.taskContextDigest !== run.pack.task_context_digest ||
+        run.pack.hash !== expectedPackHash(run.pack) ||
+        (!rawMemory && (run.trace.packId !== run.pack.id || run.trace.packHash !== run.pack.hash)) ||
+        (!rawMemory && run.output !== expectedOutput) ||
+        (!rawMemory &&
+          run.trace.appliedAtomIds.join("\u0000") !== run.pack.atom_manifest.map((atom) => atom.id).join("\u0000")) ||
+        (rawMemory && run.trace.appliedAtomIds.length !== 0)
+      )
+        throw new Error("SNAPSHOT_RUN_LINEAGE_INVALID");
+      if (run.pack.items.length !== run.pack.atom_manifest.length) throw new Error("SNAPSHOT_RUN_LINEAGE_INVALID");
+      for (const [index, manifest] of run.pack.atom_manifest.entries()) {
+        const atom = runtime.engine
+          .getProfileRevisions(manifest.id)
+          .find((candidate) => candidate.version === manifest.version);
+        const item = run.pack.items[index];
+        if (
+          !atom ||
+          !item ||
+          item.atom.id !== manifest.id ||
+          item.atom.version !== manifest.version ||
+          item.guidance !== atom.claim ||
+          atom.tenant_id !== context.tenant_id ||
+          atom.subject_id !== context.subject_id
+        )
+          throw new Error("SNAPSHOT_RUN_LINEAGE_INVALID");
+      }
+      runIds.add(run.trace.runId);
+      runtime.runLedger.push(deepFreeze({ ...record, context }));
+    }
+    const evaluationIds = new Set<string>();
+    for (const record of snapshot.evaluations) {
+      const run = runtime.getRun(record.runId);
+      assertEvaluationInput({
+        runId: record.runId,
+        experimentId: record.evaluation.experiment_id,
+        armId: record.evaluation.arm_id,
+        evaluatorClass: record.evaluation.evaluator_class,
+        criteria: record.evaluation.criteria,
+        result: record.evaluation.result,
+        uncertainty: record.evaluation.uncertainty,
+        ...(record.evaluation.reason === undefined ? {} : { reason: record.evaluation.reason }),
+        ...(record.evaluation.evaluator_identity_digest === undefined
+          ? {}
+          : { evaluatorIdentityDigest: record.evaluation.evaluator_identity_digest })
+      });
+      if (
+        evaluationIds.has(record.evaluation.id) ||
+        !run ||
+        typeof record.effective !== "boolean" ||
+        record.evaluation.tenant_id !== run.context.tenant_id ||
+        record.evaluation.subject_id !== run.context.subject_id ||
+        (record.attribution !== undefined &&
+          (record.attribution.tenant_id !== run.context.tenant_id ||
+            record.attribution.subject_id !== run.context.subject_id ||
+            !record.attribution.evaluation_ids.includes(record.evaluation.id)))
+      )
+        throw new Error("SNAPSHOT_EVALUATION_LINEAGE_INVALID");
+      if (record.attribution) {
+        const atom = runtime.engine
+          .getProfileRevisions(record.attribution.target.id)
+          .find((candidate) => candidate.version === record.attribution?.target.version);
+        if (!atom || atom.tenant_id !== run.context.tenant_id || atom.subject_id !== run.context.subject_id)
+          throw new Error("SNAPSHOT_EVALUATION_LINEAGE_INVALID");
+      }
+      evaluationIds.add(record.evaluation.id);
+      runtime.evaluationLedger.push(deepFreeze(record));
+    }
+    for (const runId of runIds) {
+      if (runtime.evaluationLedger.filter((record) => record.runId === runId && record.effective).length > 1)
+        throw new Error("SNAPSHOT_EVALUATION_PRECEDENCE_INVALID");
+    }
     return runtime;
   }
 }
@@ -365,7 +534,7 @@ export const evaluateConnectedCausalComparison = (input: ConnectedCausalInput): 
     experimentId,
     armId: "meraki_pack",
     evaluatorClass: "objective",
-    criteria: { expected_guidance: guidance, related: true },
+    criteria: { expected_guidance_present: Number(Boolean(guidance)), related: 1 },
     result: merakiCorrect ? "win" : "loss",
     uncertainty: 0
   });
@@ -374,7 +543,7 @@ export const evaluateConnectedCausalComparison = (input: ConnectedCausalInput): 
     experimentId,
     armId: "ablated_pack",
     evaluatorClass: "objective",
-    criteria: { expected_guidance: guidance, related: true },
+    criteria: { expected_guidance_present: Number(Boolean(guidance)), related: 1 },
     result: ablatedCorrect ? "win" : "loss",
     uncertainty: 0
   });
@@ -400,12 +569,4 @@ export const evaluateConnectedCausalComparison = (input: ConnectedCausalInput): 
   };
 };
 
-export const scopeFromUnknown = (value: unknown): Scope => {
-  if (!value || typeof value !== "object") throw new Error("SCOPE_REQUIRED");
-  const candidate = value as { level?: unknown; ref?: unknown };
-  if (typeof candidate.level !== "string") throw new Error("SCOPE_LEVEL_REQUIRED");
-  return {
-    level: candidate.level as Scope["level"],
-    ...(typeof candidate.ref === "string" ? { ref: candidate.ref } : {})
-  };
-};
+export const scopeFromUnknown = (value: unknown): Scope => parseScope(value);
