@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { MerakiPack, ProfileAtom, RetrievalCandidate, Scope, TaskContext } from "@meraki/contracts";
-import { canonicalJson } from "../domain/index.js";
+import { canonicalJson, parseScope } from "../domain/index.js";
 
 export type SemanticRetrievalPort = Readonly<{
   score(context: TaskContext, atom: ProfileAtom): number;
@@ -47,20 +47,24 @@ export const compileGuidance = (
   context: TaskContext,
   semantic: SemanticRetrievalPort = deterministicSemanticPort
 ): GuidanceCompilation => {
+  if (typeof context.tenant_id !== "string" || !context.tenant_id.trim()) throw new Error("TENANT_ID_REQUIRED");
+  if (typeof context.subject_id !== "string" || !context.subject_id.trim()) throw new Error("SUBJECT_ID_REQUIRED");
+  if (!Number.isInteger(context.token_budget) || context.token_budget < 0) throw new Error("TOKEN_BUDGET_INVALID");
+  const normalizedContext = { ...context, scope: parseScope(context.scope) };
   const eligible = atoms
     .slice()
     .sort((left, right) => left.id.localeCompare(right.id))
     .map((atom) => {
       const reasons: string[] = [];
-      if (atom.tenant_id !== context.tenant_id || atom.subject_id !== context.subject_id)
+      if (atom.tenant_id !== normalizedContext.tenant_id || atom.subject_id !== normalizedContext.subject_id)
         reasons.push("tenant_or_subject_mismatch");
       if (atom.lifecycle !== "active") reasons.push("inactive_or_revoked");
-      if (!sameScope(atom.scope, context.scope)) reasons.push("scope_mismatch");
-      if (atom.mode !== undefined && atom.mode !== context.mode) reasons.push("mode_mismatch");
-      if (atom.sensitivity === "sensitive" && !context.permissions.includes("read:sensitive"))
+      if (!sameScope(atom.scope, normalizedContext.scope)) reasons.push("scope_mismatch");
+      if (atom.mode !== undefined && atom.mode !== normalizedContext.mode) reasons.push("mode_mismatch");
+      if (atom.sensitivity === "sensitive" && !normalizedContext.permissions.includes("read:sensitive"))
         reasons.push("sensitive_permission_denied");
-      const lexical = deterministicSemanticPort.score(context, atom);
-      const semanticScore = semantic.score(context, atom);
+      const lexical = deterministicSemanticPort.score(normalizedContext, atom);
+      const semanticScore = semantic.score(normalizedContext, atom);
       if (lexical === 0 && semanticScore <= 0) reasons.push("negative_control_no_task_relevance");
       const included = reasons.length === 0;
       const candidate: RetrievalCandidate = {
@@ -79,7 +83,7 @@ export const compileGuidance = (
     .filter((entry) => entry.candidate.decision === "included")
     .sort((left, right) => right.score - left.score || left.atom.id.localeCompare(right.atom.id))) {
     const cost = tokenCost(entry.atom.claim);
-    if (used + cost > context.token_budget) {
+    if (used + cost > normalizedContext.token_budget) {
       entry.candidate.decision = "excluded";
       entry.candidate.reasons = ["token_budget_exceeded"];
       continue;
@@ -92,10 +96,10 @@ export const compileGuidance = (
     guidance: entry.atom.claim,
     reason: entry.candidate.reasons[0] ?? "matched"
   }));
-  const task_context_digest = digest(canonicalJson(context));
+  const task_context_digest = digest(canonicalJson(normalizedContext));
   const payload = {
-    tenant_id: context.tenant_id,
-    subject_id: context.subject_id,
+    tenant_id: normalizedContext.tenant_id,
+    subject_id: normalizedContext.subject_id,
     task_context_digest,
     items,
     atom_manifest: items.map((item) => item.atom),

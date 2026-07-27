@@ -49,22 +49,59 @@ corepack pnpm dev:mcp
 
 Both adapters use `.meraki/runtime.json` by default. Do not run multiple writers against the same local file.
 
-## Inspect it in Studio
+## Inspect a synthetic workload in Studio
 
-Start the API, open `http://localhost:3001/dashboard`, and paste the bearer token printed by
-`corepack pnpm dev:token`. Studio shows profile lifecycle, governed candidate approvals, recent
-runs, applied guidance, and evaluation results.
+The generator creates active correction-derived guidance, governed candidates, update proposals,
+agent runs, varied generated outcomes, and retained prompt-injection audit events. Every activity
+and outcome cites the actual run trace that produced it. It also creates
+same-tenant/other-subject and other-tenant/same-subject records so the API filter can be checked
+rather than assumed.
 
-To generate a varied local workload (corrections, activities, outcomes, runs, evaluations, and
-prompt-injection audit events) before inspecting it, run:
+Its evaluation records are synthetic, illustrative UI/load fixtures. Their verdicts come from
+generated outcome fields such as completion, score, latency, and attempts. Evaluator-class variety
+exists only to exercise Studio rendering and precedence behavior; it is not human/model evaluation
+evidence, and a `win` does not prove Meraki improved the output. Summary counts therefore say
+`guidance_applied_runs`, not “improved runs,” and every synthetic evaluation reason begins with
+`synthetic:`.
+
+First export the three JWT settings from `.env.example`; `.env` files are not loaded automatically.
+Then run the generator and create a token in the **same shell**:
 
 ```bash
+# bash
+export MERAKI_JWT_SECRET=replace-with-at-least-32-utf8-bytes
+export MERAKI_JWT_ISSUER=https://auth.meraki.local
+export MERAKI_JWT_AUDIENCE=meraki-core
 corepack pnpm demo:synthetic 1000
-MERAKI_RUNTIME_PATH=.meraki/synthetic-runtime.json corepack pnpm dev:api
+corepack pnpm dev:token
+export MERAKI_RUNTIME_PATH=.meraki/synthetic-runtime.json
+corepack pnpm dev:api
 ```
 
-The generator prints a summary and writes a runtime snapshot to
-`.meraki/synthetic-runtime.json`. Set `MERAKI_SYNTHETIC_OUTPUT` to choose another path.
+```powershell
+# PowerShell
+$env:MERAKI_JWT_SECRET = "replace-with-at-least-32-utf8-bytes"
+$env:MERAKI_JWT_ISSUER = "https://auth.meraki.local"
+$env:MERAKI_JWT_AUDIENCE = "meraki-core"
+corepack pnpm demo:synthetic 1000
+corepack pnpm dev:token
+$env:MERAKI_RUNTIME_PATH = ".meraki/synthetic-runtime.json"
+corepack pnpm dev:api
+```
+
+Open `http://localhost:3001/dashboard` and paste the printed token. With no identity overrides,
+both the generator and token use tenant `local`, subject `builder`, and actor `builder`. The
+generator summary separates total records from the records visible to that dashboard identity.
+If you set `MERAKI_TENANT_ID`, `MERAKI_SUBJECT_ID`, or `MERAKI_ACTOR_ID`, set them before both
+generation and token creation.
+
+The snapshot is written to `.meraki/synthetic-runtime.json`. `MERAKI_SYNTHETIC_OUTPUT` chooses a
+different path, while `MERAKI_SYNTHETIC_SEED` changes the deterministic workload mix. The same
+count and seed produce the same `logical_workload_sha256` and aggregate mix. Snapshot bytes still
+differ because audit records intentionally receive new UUIDs and timestamps. Generation fails if
+a flagged injection enters the observation/learning pipeline, a negative-control event creates
+learning, any workload event disagrees with its run scope or mode, or the snapshot cannot survive a
+load-from-disk round trip.
 
 ## Repository map
 
@@ -98,7 +135,7 @@ Meraki Core does not currently provide:
 - hosted or multi-process persistence;
 - PostgreSQL, teams, billing, or public signup;
 - a production identity provider;
-- a supported Studio UI;
+- a production or multi-user Studio;
 - automatic extraction from everything a user does;
 - proof that the approach works at useful scale.
 

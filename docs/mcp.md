@@ -18,4 +18,6 @@ The stable tool names are:
 
 The adapter can retrieve scoped guidance and record evidence or outcomes. It cannot directly activate, rewrite, or delete profile rules. Governance remains behind authenticated API commands.
 
+Guidance, example, and explanation tools require `profile:read`. Feedback and outcome tools require `evidence:write`. Calls without the required scope return a deterministic `insufficient_scope` MCP error and do not mutate the runtime.
+
 The MCP and API adapters can use the same `MERAKI_RUNTIME_PATH`, but the local JSON adapter supports only one writer at a time. Restart an MCP process to load changes written by a separate API process.

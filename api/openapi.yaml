@@ -149,9 +149,18 @@ paths:
   /v1/runs:
     get:
       operationId: listRuns
+      parameters:
+        - in: query
+          name: limit
+          required: false
+          description: Return only the newest records while preserving subject-wide totals.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
       responses:
         "200":
-          description: Authenticated subject run records
+          description: Authenticated subject run records, total count, and guidance-application summary
   /v1/runs/{runId}:
     get:
       operationId: getRun

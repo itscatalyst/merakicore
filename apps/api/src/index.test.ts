@@ -85,10 +85,27 @@ describe("connected agent adapter", () => {
     const dashboard = await server.inject({ method: "GET", url: "/dashboard" });
     expect(dashboard.statusCode).toBe(200);
     expect(dashboard.headers["content-type"]).toContain("text/html");
+    expect(dashboard.headers["cache-control"]).toBe("no-store");
+    expect(dashboard.headers["content-security-policy"]).toContain("connect-src 'self'");
+    expect(dashboard.headers["referrer-policy"]).toBe("no-referrer");
     expect(dashboard.body).toContain("Meraki <span>Studio</span>");
     expect(dashboard.body).toContain("Profile atoms");
     expect(dashboard.body).toContain("data-approve=");
     expect(dashboard.body).toContain("profile/atoms/");
+    expect(dashboard.body).toContain('<label for="token">Bearer token</label>');
+    expect(dashboard.body).toContain('aria-live="polite"');
+    expect(dashboard.body).toContain("Showing newest ");
+    expect(dashboard.body).toContain("newestRuns=(runs)=>runs.slice(0,RUN_LIMIT)");
+    expect(dashboard.body).not.toContain("runs.slice().reverse()");
+    expect(dashboard.body).toContain("Approve this candidate for future matching tasks?");
+    expect(dashboard.body).toContain("Candidate decisions");
+    expect(dashboard.body).toContain("View lineage");
+    expect(dashboard.body).toContain("Selected learning lineage");
+    expect(dashboard.body).toContain("synthetic record");
+    expect(dashboard.body).toContain("No data is shown because the connection failed.");
+    expect(dashboard.body).toContain("'&':'&amp;'");
+    expect(dashboard.body).toContain("@media(max-width:520px)");
+    expect(dashboard.body).toContain("aria-busy");
   });
 
   it("changes a relevant run and returns a trace, while unrelated mode stays baseline", () => {
@@ -223,6 +240,36 @@ describe("connected agent adapter", () => {
     await isolated.close();
   });
 
+  it("enforces least-privilege scopes before reads or mutations", async () => {
+    const runtime = new ConnectedAgentRuntime();
+    const readOnly = buildServer(runtime, {
+      ...testAuthority,
+      scopes: new Set(["profile:read"])
+    });
+    await readOnly.ready();
+    expect((await readOnly.inject({ method: "GET", url: "/v1/profile/atoms" })).statusCode).toBe(200);
+    const before = runtime.snapshot();
+    const deniedWrite = await readOnly.inject({
+      method: "POST",
+      url: "/v1/corrections",
+      payload: correction
+    });
+    expect(deniedWrite.statusCode).toBe(403);
+    expect(deniedWrite.json<{ error: string }>().error).toBe("insufficient_scope");
+    expect(runtime.snapshot()).toEqual(before);
+    await readOnly.close();
+
+    const writeOnly = buildServer(runtime, {
+      ...testAuthority,
+      scopes: new Set(["evidence:write"])
+    });
+    await writeOnly.ready();
+    const deniedRead = await writeOnly.inject({ method: "GET", url: "/v1/profile/atoms" });
+    expect(deniedRead.statusCode).toBe(403);
+    expect(deniedRead.json<{ error: string }>().error).toBe("insufficient_scope");
+    await writeOnly.close();
+  });
+
   it("rejects valid-identity malformed activity without mutating the runtime", async () => {
     const runtime = new ConnectedAgentRuntime();
     const isolated = testServer(runtime);
@@ -245,6 +292,20 @@ describe("connected agent adapter", () => {
     expect(response.json<{ error: string }>().error).toBe("CONTENT_REQUIRED");
     expect(runtime.snapshot()).toEqual(before);
     await isolated.close();
+  });
+
+  it("preserves Fastify transport status codes instead of reporting server limits as domain validation", async () => {
+    const response = await server.inject({
+      method: "POST",
+      url: "/v1/activity",
+      payload: {
+        ...correction,
+        activityType: "edit",
+        content: "x".repeat(1_100_000)
+      }
+    });
+    expect(response.statusCode).toBe(413);
+    expect(response.json<{ error: string }>().error).toBe("FST_ERR_CTP_BODY_TOO_LARGE");
   });
 
   it("exposes correction and run over REST with immutable evidence and trace", async () => {
@@ -302,6 +363,23 @@ describe("connected agent adapter", () => {
     expect(listed.json<{ items: Array<{ id: string; lifecycle: string }> }>().items).toContainEqual(
       expect.objectContaining({ id: lesson.id, lifecycle: "active" })
     );
+    const invalid = await isolated.inject({
+      method: "POST",
+      url: `/v1/profile/atoms/${lesson.id}/commands`,
+      payload: {
+        atom_id: lesson.id,
+        expected_version: lesson.version,
+        operation: "bogus",
+        scope: { level: "user" }
+      }
+    });
+    expect(invalid.statusCode).toBe(422);
+    expect(invalid.json<{ error: string }>().error).toBe("ATOM_OPERATION_INVALID");
+    expect(
+      (await isolated.inject({ method: "GET", url: "/v1/profile/atoms" }))
+        .json<{ items: Array<{ id: string; version: number; lifecycle: string }> }>()
+        .items.find((atom) => atom.id === lesson.id)
+    ).toMatchObject({ version: lesson.version, lifecycle: "active" });
     const revoked = await isolated.inject({
       method: "POST",
       url: `/v1/profile/atoms/${lesson.id}/commands`,
@@ -431,7 +509,7 @@ describe("connected agent adapter", () => {
         tenantId: "tenant-a",
         subjectId: "user-a",
         actorId: "user-a",
-        runId: relatedResult.trace.packHash,
+        runId: relatedResult.trace.runId,
         taskType: "product writing",
         activityType: "approval",
         content: "Accepted the concrete problem and mechanism opening",
@@ -448,9 +526,9 @@ describe("connected agent adapter", () => {
       payload: {
         tenantId: "tenant-a",
         subjectId: "user-a",
-        runId: relatedResult.trace.packHash,
+        runId: relatedResult.trace.runId,
         outcomeType: "accepted",
-        outcome: { accepted: true },
+        outcome: { accepted: 1 },
         scope,
         mode
       }
@@ -468,7 +546,7 @@ describe("connected agent adapter", () => {
         experiment_id: "launch-loop",
         arm_id: "meraki_pack",
         evaluator_class: "objective",
-        criteria: { accepted: true },
+        criteria: { accepted: 1 },
         result: "win",
         uncertainty: 0
       }
@@ -521,6 +599,38 @@ describe("connected agent adapter", () => {
     expect(
       runs.json<{ items: Array<{ run: { trace: { changed: boolean; packHash: string } } }> }>().items[0]?.run.trace
     ).toMatchObject({ changed: true, packHash: expect.stringMatching(/^sha256:/) });
+    await isolated.close();
+  });
+
+  it("bounds dashboard run payloads while returning subject-wide totals", async () => {
+    const isolated = testServer();
+    await isolated.ready();
+    await governedLearning(isolated);
+    for (let index = 0; index < 3; index += 1) {
+      await isolated.inject({
+        method: "POST",
+        url: "/v1/agent/run",
+        payload: {
+          context: context({ task_id: `bounded-${index}` }),
+          request: "Draft",
+          baseline: "BASELINE"
+        }
+      });
+    }
+    const bounded = await isolated.inject({ method: "GET", url: "/v1/runs?limit=2" });
+    expect(bounded.statusCode).toBe(200);
+    expect(
+      bounded.json<{
+        items: unknown[];
+        total: number;
+        summary: { guidance_applied: number; baseline_preserved: number };
+      }>()
+    ).toMatchObject({
+      items: [expect.any(Object), expect.any(Object)],
+      total: 3,
+      summary: { guidance_applied: 3, baseline_preserved: 0 }
+    });
+    expect((await isolated.inject({ method: "GET", url: "/v1/runs?limit=0" })).statusCode).toBe(422);
     await isolated.close();
   });
 
@@ -736,6 +846,13 @@ describe("connected agent adapter", () => {
     expect(approved.json<{ proposal: { status: string }; atom: { utility: number } }>().atom.utility).toBeGreaterThan(
       0
     );
+    const invalid = await isolated.inject({
+      method: "POST",
+      url: `/v1/update-proposals/${proposal.id}/commands`,
+      payload: { operation: "bogus" }
+    });
+    expect(invalid.statusCode).toBe(422);
+    expect(invalid.json<{ error: string }>().error).toBe("UPDATE_PROPOSAL_OPERATION_INVALID");
     const listed = await isolated.inject({ method: "GET", url: "/v1/update-proposals" });
     expect(listed.json<{ items: Array<{ id: string; status: string }> }>().items).toContainEqual(
       expect.objectContaining({ id: proposal.id, status: "applied" })
@@ -891,6 +1008,30 @@ describe("connected agent adapter", () => {
           .items[0]?.runId
       ).toBe(runId);
       await second.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("persists successful mutations before graceful shutdown", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "meraki-api-immediate-save-"));
+    try {
+      const path = join(directory, "runtime.json");
+      const active = await persistentTestServer(path);
+      await active.ready();
+      const learned = await governedLearning(active);
+      const lessonId = learned.json<{ lesson: { id: string } }>().lesson.id;
+      const run = await active.inject({
+        method: "POST",
+        url: "/v1/agent/run",
+        payload: { context: context(), request: "Draft", baseline: "BASELINE" }
+      });
+      const runId = run.json<{ trace: { runId: string } }>().trace.runId;
+
+      const restoredWhileServing = await new JsonConnectedRuntimeStore(path).load();
+      expect(restoredWhileServing.profileAtoms().find((atom) => atom.id === lessonId)?.lifecycle).toBe("active");
+      expect(restoredWhileServing.getRun(runId)?.run.trace.runId).toBe(runId);
+      await active.close();
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

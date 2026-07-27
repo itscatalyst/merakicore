@@ -21,6 +21,7 @@ import {
 } from "../evidence/index.js";
 import { compileGuidance } from "../guidance/index.js";
 import { ProfileGraph } from "../profile/index.js";
+import { canonicalJson, parseScope } from "../domain/index.js";
 
 export type CorrectionInput = {
   tenantId: string;
@@ -94,6 +95,15 @@ const ref = (eventId: string, text: string): EvidenceRef => ({
   span_end: text.length,
   quote_hash: digest(text)
 });
+const requiresSecurityReview = (event: Event): boolean =>
+  Array.isArray(event.payload.security_flags) && event.payload.security_flags.includes("prompt_injection_suspected");
+const deepFreeze = <T>(value: T): T => {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const nested of Object.values(value as Record<string, unknown>)) deepFreeze(nested);
+  }
+  return value;
+};
 
 /** Deterministic in-memory vertical slice used by adapters and tests. Persistence adapters can implement the same contract. */
 export class LearningEngine {
@@ -104,7 +114,6 @@ export class LearningEngine {
   private profile = new ProfileGraph();
 
   recordCorrection(input: CorrectionInput): ImmutableCorrection {
-    if (!input.original.trim() || !input.correction.trim()) throw new Error("CORRECTION_TEXT_REQUIRED");
     const chain = this.evidenceLedger.ingestExplicitCorrection(input);
     const eventId = chain.event.id;
     // The evidence ledger deliberately deduplicates retried ingestion. Preserve that
@@ -113,6 +122,7 @@ export class LearningEngine {
     const existing = this.evidence.get(eventId);
     if (existing) return existing;
     const contentHash = chain.source.content_hash;
+    const scope = parseScope(chain.event.payload.scope);
     const feedback: Feedback = {
       contract: "feedback",
       id: randomUUID(),
@@ -124,7 +134,7 @@ export class LearningEngine {
       content: input.correction,
       created_at: now()
     };
-    const evidence: ImmutableCorrection = Object.freeze({
+    const evidence: ImmutableCorrection = deepFreeze({
       feedback,
       source: chain.source,
       event: chain.event,
@@ -132,7 +142,7 @@ export class LearningEngine {
       original: input.original,
       correction: input.correction,
       taskType: input.taskType,
-      scope: input.scope,
+      scope,
       ...(input.mode === undefined ? {} : { mode: input.mode }),
       contentHash
     });
@@ -153,7 +163,11 @@ export class LearningEngine {
   }
   recordOutcome(input: ObjectiveOutcomeInput): EvidenceChain {
     const chain = this.evidenceLedger.ingestObjectiveOutcome(input);
-    this.evidenceLedger.observeExplicitActivity(chain.event.id);
+    try {
+      this.evidenceLedger.observeExplicitActivity(chain.event.id);
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "POTENTIAL_PROMPT_INJECTION_REVIEW_REQUIRED") throw error;
+    }
     return chain;
   }
   recordModelOutput(input: ModelOutputInput): EvidenceChain {
@@ -198,22 +212,20 @@ export class LearningEngine {
 
   /** Turns cited explicit activity or objective outcome into a governed candidate; it never activates it. */
   extractActivityLesson(input: ActivityLessonInput): Lesson {
-    if (!input.claim.trim()) throw new Error("CLAIM_REQUIRED");
+    if (typeof input.claim !== "string" || !input.claim.trim()) throw new Error("CLAIM_REQUIRED");
     const event = this.evidenceLedger.getEvent(input.eventId);
     const source = this.evidenceLedger.getSource(event.source_id);
     if (source.trust_class !== "explicit_user" && source.trust_class !== "objective_outcome")
       throw new Error("ACTIVITY_LESSON_TRUST_REQUIRED");
-    const scope = event.payload.scope;
-    if (
-      !scope ||
-      typeof scope !== "object" ||
-      typeof (scope as Scope).level !== "string" ||
-      ((scope as Scope).ref !== undefined &&
-        (typeof (scope as Scope).ref !== "string" || !(scope as Scope).ref?.trim()))
-    )
-      throw new Error("ACTIVITY_SCOPE_REQUIRED");
+    if (requiresSecurityReview(event)) throw new Error("POTENTIAL_PROMPT_INJECTION_REVIEW_REQUIRED");
+    const scope = parseScope(event.payload.scope);
+    const existing = [...this.lessons.values()].find((lesson) => lesson.sourceEventId === event.id);
+    if (existing) {
+      if (existing.guidance !== input.claim) throw new Error("ACTIVITY_LESSON_CLAIM_CONFLICT");
+      return existing;
+    }
     const observation = this.evidenceLedger.observeExplicitActivity(event.id);
-    const signal = this.evidenceLedger.signalExplicitActivity(observation.id, scope as Scope);
+    const signal = this.evidenceLedger.signalExplicitActivity(observation.id, scope);
     const hypothesis = this.evidenceLedger.proposeHypothesis(signal.id, input.claim);
     const atom = this.profile.createCandidate({
       tenantId: event.tenant_id,
@@ -221,7 +233,7 @@ export class LearningEngine {
       facet: input.facet ?? "workflow",
       claim: hypothesis.claim,
       epistemicClass: source.trust_class === "objective_outcome" ? "objective" : "observed",
-      scope: scope as Scope,
+      scope,
       ...(typeof event.payload.mode === "string" ? { mode: event.payload.mode } : {}),
       temporalHorizon: input.temporalHorizon ?? "ongoing",
       evidence: [...hypothesis.evidence]
@@ -282,9 +294,13 @@ export class LearningEngine {
   weaken(lessonId: string, counterevidenceEventId: string, expectedVersion: number): Lesson {
     const lesson = this.requireLesson(lessonId);
     const event = this.evidenceLedger.getEvent(counterevidenceEventId);
+    const source = this.evidenceLedger.getSource(event.source_id);
     if (event.tenant_id !== lesson.tenant_id || event.subject_id !== lesson.subject_id)
       throw new Error("COUNTEREVIDENCE_SUBJECT_MISMATCH");
     this.assertEvidenceCompatibility(lesson, event, "COUNTEREVIDENCE_SCOPE_MISMATCH", "COUNTEREVIDENCE_MODE_MISMATCH");
+    if (source.trust_class !== "explicit_user" && source.trust_class !== "objective_outcome")
+      throw new Error("COUNTEREVIDENCE_TRUST_REQUIRED");
+    if (requiresSecurityReview(event)) throw new Error("COUNTEREVIDENCE_REVIEW_REQUIRED");
     const span = event.evidence_spans[0];
     if (!span) throw new Error("COUNTEREVIDENCE_SPAN_REQUIRED");
     const atom = this.profile.weaken(lessonId, span, expectedVersion);
@@ -306,6 +322,7 @@ export class LearningEngine {
   }
 
   proposeUpdate(lessonId: string, evidenceEventId: string, operation: UpdateOperation): UpdateProposal {
+    if (operation !== "reinforce" && operation !== "weaken") throw new Error("UPDATE_OPERATION_INVALID");
     const lesson = this.requireLesson(lessonId);
     const targetBefore = this.profile.current(lessonId);
     if (targetBefore.lifecycle !== "active") throw new Error("ACTIVE_ATOM_REQUIRED");
@@ -316,6 +333,7 @@ export class LearningEngine {
     this.assertEvidenceCompatibility(lesson, event, "UPDATE_EVIDENCE_SCOPE_MISMATCH", "UPDATE_EVIDENCE_MODE_MISMATCH");
     if (source.trust_class !== "explicit_user" && source.trust_class !== "objective_outcome")
       throw new Error("UPDATE_EVIDENCE_TRUST_REQUIRED");
+    if (requiresSecurityReview(event)) throw new Error("UPDATE_EVIDENCE_REVIEW_REQUIRED");
     const evidence = event.evidence_spans[0];
     if (!evidence) throw new Error("UPDATE_EVIDENCE_SPAN_REQUIRED");
     const proposal: UpdateProposal = Object.freeze({
@@ -476,12 +494,99 @@ export class LearningEngine {
   }
   static fromSnapshot(snapshot: LearningEngineSnapshot): LearningEngine {
     const engine = new LearningEngine();
-    for (const evidence of snapshot.evidence) engine.evidence.set(evidence.eventId, Object.freeze(evidence));
-    for (const lesson of snapshot.lessons) engine.lessons.set(lesson.id, Object.freeze(lesson));
-    for (const proposal of snapshot.updateProposals ?? [])
-      engine.updateProposalRecords.set(proposal.proposal.id, Object.freeze(proposal));
     engine.evidenceLedger = EvidenceLedger.fromSnapshot(snapshot.evidenceLedger);
     engine.profile = ProfileGraph.fromSnapshot(snapshot.profile);
+    for (const evidence of snapshot.evidence) {
+      const scope = parseScope(evidence.scope);
+      const event = engine.evidenceLedger.getEvent(evidence.eventId);
+      const source = engine.evidenceLedger.getSource(event.source_id);
+      const eventScope = parseScope(event.payload.scope);
+      if (
+        engine.evidence.has(evidence.eventId) ||
+        evidence.event.id !== evidence.eventId ||
+        evidence.source.id !== source.id ||
+        canonicalJson(evidence.event) !== canonicalJson(event) ||
+        canonicalJson(evidence.source) !== canonicalJson(source) ||
+        evidence.feedback.tenant_id !== event.tenant_id ||
+        evidence.feedback.subject_id !== event.subject_id ||
+        evidence.feedback.run_id !== event.payload.run_id ||
+        evidence.feedback.actor_id !== event.payload.actor_id ||
+        evidence.feedback.content !== event.payload.correction ||
+        evidence.source.tenant_id !== event.tenant_id ||
+        evidence.source.subject_id !== event.subject_id ||
+        evidence.original !== event.payload.original ||
+        evidence.correction !== event.payload.correction ||
+        evidence.taskType !== event.payload.task_type ||
+        evidence.mode !== event.payload.mode ||
+        scope.level !== eventScope.level ||
+        scope.ref !== eventScope.ref
+      )
+        throw new Error("SNAPSHOT_CORRECTION_LINEAGE_INVALID");
+      engine.evidence.set(evidence.eventId, deepFreeze(evidence));
+    }
+    for (const lesson of snapshot.lessons) {
+      const atom = engine.profile.current(lesson.id);
+      const event = engine.evidenceLedger.getEvent(lesson.sourceEventId);
+      const scope = parseScope(lesson.scope);
+      const { guidance, sourceEventId, observationId, signalId, hypothesisId, ...lessonAtom } = lesson;
+      const observation = engine.evidenceLedger.getObservation(observationId);
+      const signal = engine.evidenceLedger.getSignal(signalId);
+      const hypothesis = engine.evidenceLedger.getHypothesis(hypothesisId);
+      if (
+        engine.lessons.has(lesson.id) ||
+        guidance !== atom.claim ||
+        sourceEventId !== event.id ||
+        canonicalJson(lessonAtom) !== canonicalJson(atom) ||
+        atom.tenant_id !== lesson.tenant_id ||
+        atom.subject_id !== lesson.subject_id ||
+        atom.version !== lesson.version ||
+        atom.lifecycle !== lesson.lifecycle ||
+        event.tenant_id !== lesson.tenant_id ||
+        event.subject_id !== lesson.subject_id ||
+        scope.level !== atom.scope.level ||
+        scope.ref !== atom.scope.ref ||
+        observation.tenant_id !== lesson.tenant_id ||
+        observation.subject_id !== lesson.subject_id ||
+        !observation.event_ids.includes(event.id) ||
+        signal.tenant_id !== lesson.tenant_id ||
+        signal.subject_id !== lesson.subject_id ||
+        !signal.observation_ids.includes(observation.id) ||
+        signal.scope.level !== scope.level ||
+        signal.scope.ref !== scope.ref ||
+        hypothesis.tenant_id !== lesson.tenant_id ||
+        hypothesis.subject_id !== lesson.subject_id ||
+        hypothesis.scope.level !== scope.level ||
+        hypothesis.scope.ref !== scope.ref ||
+        !hypothesis.evidence.some((reference) => reference.event_id === event.id)
+      )
+        throw new Error("SNAPSHOT_LESSON_LINEAGE_INVALID");
+      engine.lessons.set(lesson.id, deepFreeze(lesson));
+    }
+    for (const proposal of snapshot.updateProposals ?? []) {
+      const targetRevision = engine.profile
+        .revisions(proposal.targetBefore.id)
+        .find((atom) => atom.version === proposal.targetBefore.version);
+      const evidenceEvent = engine.evidenceLedger.getEvent(proposal.evidenceEventId);
+      if (
+        engine.updateProposalRecords.has(proposal.proposal.id) ||
+        (proposal.proposal.operation !== "reinforce" && proposal.proposal.operation !== "weaken") ||
+        proposal.proposal.target.id !== proposal.targetBefore.id ||
+        proposal.proposal.target.version !== proposal.targetBefore.version ||
+        proposal.proposal.expected_version !== proposal.targetBefore.version ||
+        proposal.proposal.tenant_id !== proposal.targetBefore.tenant_id ||
+        proposal.proposal.subject_id !== proposal.targetBefore.subject_id ||
+        !targetRevision ||
+        canonicalJson(targetRevision) !== canonicalJson(proposal.targetBefore) ||
+        evidenceEvent.tenant_id !== proposal.proposal.tenant_id ||
+        evidenceEvent.subject_id !== proposal.proposal.subject_id ||
+        (proposal.proposal.status === "applied" && proposal.appliedVersion === undefined) ||
+        (proposal.proposal.status !== "applied" &&
+          proposal.proposal.status !== "rolled_back" &&
+          proposal.appliedVersion !== undefined)
+      )
+        throw new Error("SNAPSHOT_UPDATE_PROPOSAL_INVALID");
+      engine.updateProposalRecords.set(proposal.proposal.id, deepFreeze(proposal));
+    }
     return engine;
   }
   private requireLesson(id: string): Lesson {
@@ -490,14 +595,13 @@ export class LearningEngine {
     return lesson;
   }
   private assertEvidenceCompatibility(lesson: Lesson, event: Event, scopeError: string, modeError: string): void {
-    const eventScope = event.payload.scope;
-    if (
-      !eventScope ||
-      typeof eventScope !== "object" ||
-      (eventScope as Scope).level !== lesson.scope.level ||
-      (eventScope as Scope).ref !== lesson.scope.ref
-    )
+    let eventScope: Scope;
+    try {
+      eventScope = parseScope(event.payload.scope);
+    } catch {
       throw new Error(scopeError);
+    }
+    if (eventScope.level !== lesson.scope.level || eventScope.ref !== lesson.scope.ref) throw new Error(scopeError);
     if (lesson.mode !== undefined && event.payload.mode !== lesson.mode) throw new Error(modeError);
   }
   private requireUpdateProposal(id: string): GovernedUpdateProposal {

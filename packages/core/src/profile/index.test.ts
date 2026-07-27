@@ -84,6 +84,45 @@ describe("profile graph", () => {
     expect(unmode.version).toBe(2);
   });
 
+  it("rejects invalid candidate, query, rescope, and restored snapshot scopes", () => {
+    const graph = new ProfileGraph();
+    const candidateInput = {
+      tenantId: "tenant-a",
+      subjectId: "user-a",
+      facet: "communication" as const,
+      claim: "Use concise subjects",
+      epistemicClass: "declared" as const,
+      scope: projectScope,
+      temporalHorizon: "ongoing" as const,
+      evidence
+    };
+    expect(() => graph.createCandidate({ ...candidateInput, scope: { level: "project" } })).toThrow(
+      "SCOPE_REF_REQUIRED"
+    );
+    expect(() => graph.createCandidate({ ...candidateInput, facet: "made_up" as never })).toThrow("FACET_INVALID");
+    expect(() => graph.createCandidate({ ...candidateInput, epistemicClass: "made_up" as never })).toThrow(
+      "EPISTEMIC_CLASS_INVALID"
+    );
+    expect(() => graph.createCandidate({ ...candidateInput, temporalHorizon: "forever" as never })).toThrow(
+      "TEMPORAL_HORIZON_INVALID"
+    );
+    const candidate = graph.createCandidate(candidateInput);
+    expect(() => graph.rescope(candidate.id, { level: "team" }, undefined, candidate.version)).toThrow(
+      "SCOPE_REF_REQUIRED"
+    );
+    expect(() => graph.resolve({ tenantId: "tenant-a", subjectId: "user-a", scope: { level: "workspace" } })).toThrow(
+      "SCOPE_REF_REQUIRED"
+    );
+
+    const invalidFacet = structuredClone(graph.snapshot());
+    Object.assign(invalidFacet.history[0]![1][0]!, { facet: "made_up" });
+    expect(() => ProfileGraph.fromSnapshot(invalidFacet)).toThrow("SNAPSHOT_PROFILE_HISTORY_INVALID");
+
+    const snapshot = structuredClone(graph.snapshot());
+    Object.assign(snapshot.history[0]![1][0]!.scope, { ref: undefined });
+    expect(() => ProfileGraph.fromSnapshot(snapshot)).toThrow("SCOPE_REF_REQUIRED");
+  });
+
   it("weakens with inspectable counterevidence and splits a superseded claim into governed candidates", () => {
     const graph = new ProfileGraph();
     const candidate = graph.createCandidate({
@@ -132,9 +171,30 @@ describe("profile graph", () => {
     const reinforced = graph.reinforce(active.id, active.version);
     expect(reinforced.confidence).toBeLessThanOrEqual(1);
     expect(reinforced.utility).toBeGreaterThan(active.utility);
+    expect(() =>
+      graph.restore(reinforced.id, reinforced.version, { ...active, claim: "Forged rollback state" })
+    ).toThrow("RESTORE_REVISION_REQUIRED");
     const restored = graph.restore(reinforced.id, reinforced.version, active);
     expect(restored.confidence).toBe(active.confidence);
     expect(restored.utility).toBe(active.utility);
     expect(restored.version).toBe(reinforced.version + 1);
+  });
+
+  it("cannot restore one atom from another atom's state", () => {
+    const graph = new ProfileGraph();
+    const create = (claim: string) =>
+      graph.createCandidate({
+        tenantId: "tenant-a",
+        subjectId: "user-a",
+        facet: "communication",
+        claim,
+        epistemicClass: "declared",
+        scope: projectScope,
+        temporalHorizon: "ongoing",
+        evidence
+      });
+    const first = create("Use concise subjects");
+    const second = create("Use descriptive subjects");
+    expect(() => graph.restore(first.id, first.version, second)).toThrow("RESTORE_TARGET_MISMATCH");
   });
 });

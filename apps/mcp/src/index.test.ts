@@ -152,6 +152,70 @@ describe("Meraki MCP adapter", () => {
     });
     expect(result).toMatchObject({ isError: true, content: { code: "TASK_CONTEXT_INCOMPLETE" } });
   });
+  it("enforces read and evidence scopes at the MCP boundary", async () => {
+    const runtime = new ConnectedAgentRuntime();
+    const readOnly = new MerakiMcpAdapter(runtime, {
+      ...authority,
+      scopes: new Set(["profile:read"])
+    });
+    expect(
+      await readOnly.handle({
+        name: "meraki_record_feedback",
+        arguments: correction
+      })
+    ).toMatchObject({ isError: true, content: { code: "insufficient_scope" } });
+
+    const evidenceOnly = new MerakiMcpAdapter(runtime, {
+      ...authority,
+      scopes: new Set(["evidence:write"])
+    });
+    expect(
+      await evidenceOnly.handle({
+        name: "meraki_get_guidance",
+        arguments: { context }
+      })
+    ).toMatchObject({ isError: true, content: { code: "insufficient_scope" } });
+    expect(runtime.snapshot().engine.evidence).toEqual([]);
+  });
+  it("uses the canonical scope validator for retrieval and ingestion", async () => {
+    const adapter = new MerakiMcpAdapter(new ConnectedAgentRuntime(), authority);
+    const missingProjectRef = await adapter.handle({
+      name: "meraki_record_feedback",
+      arguments: { ...correction, scope: { level: "project" } }
+    });
+    expect(missingProjectRef).toMatchObject({ isError: true, content: { code: "SCOPE_REF_REQUIRED" } });
+
+    const unknownLevel = await adapter.handle({
+      name: "meraki_get_guidance",
+      arguments: { context: { ...context, scope: { level: "planet", ref: "mars" } } }
+    });
+    expect(unknownLevel).toMatchObject({ isError: true, content: { code: "SCOPE_LEVEL_INVALID" } });
+
+    const invalidBudget = await adapter.handle({
+      name: "meraki_get_guidance",
+      arguments: { context: { ...context, token_budget: 1.5 } }
+    });
+    expect(invalidBudget).toMatchObject({ isError: true, content: { code: "TASK_CONTEXT_INVALID" } });
+
+    const duplicatePermissions = await adapter.handle({
+      name: "meraki_get_guidance",
+      arguments: { context: { ...context, permissions: ["read:sensitive", "read:sensitive"] } }
+    });
+    expect(duplicatePermissions).toMatchObject({ isError: true, content: { code: "TASK_CONTEXT_INVALID" } });
+
+    const userScope = await adapter.handle({
+      name: "meraki_record_outcome",
+      arguments: {
+        tenantId: "tenant-a",
+        subjectId: "user-a",
+        runId: "run-user-scope",
+        outcomeType: "accepted",
+        outcome: { accepted: true },
+        scope: { level: "user" }
+      }
+    });
+    expect(userScope.isError).toBeUndefined();
+  });
   it("rejects tenant or subject tampering before MCP state mutation", async () => {
     const runtime = new ConnectedAgentRuntime();
     const adapter = new MerakiMcpAdapter(runtime, authority);
