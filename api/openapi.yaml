@@ -8,6 +8,17 @@ info:
 security:
   - bearerAuth: []
 paths:
+  /dashboard:
+    get:
+      security: []
+      operationId: getDashboard
+      responses:
+        "200":
+          description: Local Meraki Studio HTML shell; API data remains bearer authenticated
+          content:
+            text/html:
+              schema:
+                type: string
   /health:
     get:
       security: []

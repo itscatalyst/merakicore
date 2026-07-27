@@ -11,6 +11,7 @@ import {
 } from "@meraki/auth";
 import { ConnectedAgentRuntime, evaluateConnectedCausalComparison, scopeFromUnknown } from "@meraki/core";
 import { JsonConnectedRuntimeStore } from "@meraki/storage-local";
+import { dashboardHtml } from "./dashboard.js";
 export { ConnectedAgentRuntime } from "@meraki/core";
 export { JsonConnectedRuntimeStore } from "@meraki/storage-local";
 
@@ -177,8 +178,9 @@ export const buildServer = (
     service: "meraki-core",
     contract_version: "0.1.0"
   }));
+  server.get("/dashboard", (_request, reply) => reply.type("text/html; charset=utf-8").send(dashboardHtml));
   server.addHook("onRequest", async (request, reply) => {
-    if (request.url === "/health") return;
+    if (request.url === "/health" || request.url === "/dashboard") return;
     try {
       requestContexts.set(request, await authenticator.authenticate(request.headers.authorization));
     } catch (error) {

@@ -81,6 +81,16 @@ afterAll(async () => {
 });
 
 describe("connected agent adapter", () => {
+  it("serves an interactive Studio dashboard without requiring API credentials", async () => {
+    const dashboard = await server.inject({ method: "GET", url: "/dashboard" });
+    expect(dashboard.statusCode).toBe(200);
+    expect(dashboard.headers["content-type"]).toContain("text/html");
+    expect(dashboard.body).toContain("Meraki <span>Studio</span>");
+    expect(dashboard.body).toContain("Profile atoms");
+    expect(dashboard.body).toContain("data-approve=");
+    expect(dashboard.body).toContain("profile/atoms/");
+  });
+
   it("changes a relevant run and returns a trace, while unrelated mode stays baseline", () => {
     const runtime = new ConnectedAgentRuntime();
     runtime.learn(correction);

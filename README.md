@@ -49,6 +49,23 @@ corepack pnpm dev:mcp
 
 Both adapters use `.meraki/runtime.json` by default. Do not run multiple writers against the same local file.
 
+## Inspect it in Studio
+
+Start the API, open `http://localhost:3001/dashboard`, and paste the bearer token printed by
+`corepack pnpm dev:token`. Studio shows profile lifecycle, governed candidate approvals, recent
+runs, applied guidance, and evaluation results.
+
+To generate a varied local workload (corrections, activities, outcomes, runs, evaluations, and
+prompt-injection audit events) before inspecting it, run:
+
+```bash
+corepack pnpm demo:synthetic 1000
+MERAKI_RUNTIME_PATH=.meraki/synthetic-runtime.json corepack pnpm dev:api
+```
+
+The generator prints a summary and writes a runtime snapshot to
+`.meraki/synthetic-runtime.json`. Set `MERAKI_SYNTHETIC_OUTPUT` to choose another path.
+
 ## Repository map
 
 ```text

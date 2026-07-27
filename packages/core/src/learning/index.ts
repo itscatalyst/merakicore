@@ -107,6 +107,11 @@ export class LearningEngine {
     if (!input.original.trim() || !input.correction.trim()) throw new Error("CORRECTION_TEXT_REQUIRED");
     const chain = this.evidenceLedger.ingestExplicitCorrection(input);
     const eventId = chain.event.id;
+    // The evidence ledger deliberately deduplicates retried ingestion. Preserve that
+    // idempotency at the learning layer too: otherwise a retry would manufacture a
+    // new Feedback record and silently replace the original event wrapper.
+    const existing = this.evidence.get(eventId);
+    if (existing) return existing;
     const contentHash = chain.source.content_hash;
     const feedback: Feedback = {
       contract: "feedback",
@@ -137,7 +142,13 @@ export class LearningEngine {
 
   recordActivity(input: ExplicitActivityInput): EvidenceChain {
     const chain = this.evidenceLedger.ingestExplicitActivity(input);
-    this.evidenceLedger.observeExplicitActivity(chain.event.id);
+    // Suspicious content remains available for audit, but must not become an
+    // observation merely as a side effect of ingestion.
+    try {
+      this.evidenceLedger.observeExplicitActivity(chain.event.id);
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "POTENTIAL_PROMPT_INJECTION_REVIEW_REQUIRED") throw error;
+    }
     return chain;
   }
   recordOutcome(input: ObjectiveOutcomeInput): EvidenceChain {
@@ -152,6 +163,10 @@ export class LearningEngine {
   extractLesson(eventId: string): Lesson {
     const evidence = this.evidence.get(eventId);
     if (!evidence) throw new Error("EVIDENCE_NOT_FOUND");
+    // Extraction is commonly retried independently of ingestion. A source event
+    // represents one correction, so it must not fan out into duplicate atoms.
+    const existing = [...this.lessons.values()].find((lesson) => lesson.sourceEventId === eventId);
+    if (existing) return existing;
     const observation = this.evidenceLedger.observeCorrection(eventId);
     const signal = this.evidenceLedger.signalCorrection(observation.id, evidence.scope);
     const hypothesis = this.evidenceLedger.proposeHypothesis(
@@ -193,7 +208,8 @@ export class LearningEngine {
       !scope ||
       typeof scope !== "object" ||
       typeof (scope as Scope).level !== "string" ||
-      typeof (scope as Scope).ref !== "string"
+      ((scope as Scope).ref !== undefined &&
+        (typeof (scope as Scope).ref !== "string" || !(scope as Scope).ref?.trim()))
     )
       throw new Error("ACTIVITY_SCOPE_REQUIRED");
     const observation = this.evidenceLedger.observeExplicitActivity(event.id);
@@ -362,7 +378,8 @@ export class LearningEngine {
 
   learn(input: CorrectionInput): LearningReceipt {
     const evidence = this.recordCorrection(input);
-    const lesson = this.approve(this.extractLesson(evidence.eventId).id);
+    const extracted = this.extractLesson(evidence.eventId);
+    const lesson = extracted.lifecycle === "candidate" ? this.approve(extracted.id, extracted.version) : extracted;
     const retrieved = this.retrieve({
       contract: "task_context",
       tenant_id: input.tenantId,

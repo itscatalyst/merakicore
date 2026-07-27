@@ -35,6 +35,27 @@ describe("evidence ledger", () => {
     expect(hypothesis.evidence[0]?.event_id).toBe(chain.event.id);
   });
 
+  it("accepts contract-valid scopes without an optional ref", () => {
+    const ledger = new EvidenceLedger();
+    const scope = { level: "user" as const };
+    const activity = ledger.ingestExplicitActivity({
+      ...correction,
+      activityType: "approval",
+      content: "Approved",
+      scope
+    });
+    const outcome = ledger.ingestObjectiveOutcome({
+      tenantId: correction.tenantId,
+      subjectId: correction.subjectId,
+      runId: correction.runId,
+      outcomeType: "accepted",
+      outcome: { accepted: true },
+      scope
+    });
+    expect(activity.event.payload.scope).toEqual(scope);
+    expect(outcome.event.payload.scope).toEqual(scope);
+  });
+
   it("does not allow model output to become user evidence", () => {
     const ledger = new EvidenceLedger();
     const modelOutput = ledger.ingestModelOutput({

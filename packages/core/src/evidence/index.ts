@@ -469,8 +469,7 @@ export class EvidenceLedger {
       typeof input.scope !== "object" ||
       typeof input.scope.level !== "string" ||
       !input.scope.level.trim() ||
-      typeof input.scope.ref !== "string" ||
-      !input.scope.ref.trim()
+      (input.scope.ref !== undefined && (typeof input.scope.ref !== "string" || !input.scope.ref.trim()))
     )
       throw new Error("SCOPE_REQUIRED");
     const reserved = new Set([
@@ -504,8 +503,7 @@ export class EvidenceLedger {
       typeof input.scope !== "object" ||
       typeof input.scope.level !== "string" ||
       !input.scope.level.trim() ||
-      typeof input.scope.ref !== "string" ||
-      !input.scope.ref.trim()
+      (input.scope.ref !== undefined && (typeof input.scope.ref !== "string" || !input.scope.ref.trim()))
     )
       throw new Error("SCOPE_REQUIRED");
   }
