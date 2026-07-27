@@ -106,6 +106,10 @@ describe("connected agent adapter", () => {
     expect(dashboard.body).toContain("'&':'&amp;'");
     expect(dashboard.body).toContain("@media(max-width:520px)");
     expect(dashboard.body).toContain("aria-busy");
+
+    const cacheBusted = await server.inject({ method: "GET", url: "/dashboard?refresh=1" });
+    expect(cacheBusted.statusCode).toBe(200);
+    expect(cacheBusted.headers["content-type"]).toContain("text/html");
   });
 
   it("changes a relevant run and returns a trace, while unrelated mode stays baseline", () => {

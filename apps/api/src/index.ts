@@ -212,7 +212,8 @@ export const buildServer = (
       .send(dashboardHtml)
   );
   server.addHook("onRequest", async (request, reply) => {
-    if (request.url === "/health" || request.url === "/dashboard") return;
+    const pathname = request.url.split("?", 1)[0];
+    if (pathname === "/health" || pathname === "/dashboard") return;
     try {
       requestContexts.set(request, await authenticator.authenticate(request.headers.authorization));
     } catch (error) {
