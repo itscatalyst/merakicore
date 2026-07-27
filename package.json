@@ -13,6 +13,7 @@
     "install:verify": "corepack pnpm install --frozen-lockfile && corepack pnpm build && corepack pnpm typecheck",
     "dev:api": "corepack pnpm --filter @meraki/api build && node apps/api/dist/index.js",
     "dev:mcp": "corepack pnpm --filter @meraki/mcp build && node apps/mcp/dist/stdio.js",
+    "mcp:local": "corepack pnpm --filter @meraki/mcp... build && node scripts/run-local-mcp.mjs",
     "dev:token": "corepack pnpm --filter @meraki/auth build && node packages/auth/dist/local-token.js",
     "example:quickstart": "corepack pnpm --filter @meraki/quickstart start",
     "demo:synthetic": "corepack pnpm build && node scripts/synthetic-demo.mjs",
