@@ -41,6 +41,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@meraki/application':
+        specifier: workspace:*
+        version: link:../../packages/application
       '@meraki/auth':
         specifier: workspace:*
         version: link:../../packages/auth
@@ -80,6 +83,18 @@ importers:
       '@meraki/storage-local':
         specifier: workspace:*
         version: link:../../packages/storage-local
+
+  packages/application:
+    dependencies:
+      '@meraki/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@meraki/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@meraki/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/auth:
     dependencies:

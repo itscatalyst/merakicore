@@ -3,6 +3,7 @@
   "compilerOptions": { "outDir": "dist", "rootDir": "src", "tsBuildInfoFile": "dist/.tsbuildinfo" },
   "include": ["src/**/*.ts"],
   "references": [
+    { "path": "../../packages/application" },
     { "path": "../../packages/auth" },
     { "path": "../../packages/contracts" },
     { "path": "../../packages/core" },
