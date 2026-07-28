@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { signTestJwt } from "@meraki/auth";
+import { MERAKI_MCP_TOOL_DESCRIPTORS } from "@meraki/mcp-tools";
 import { describe, expect, it } from "vitest";
 
 type RpcResponse = {
@@ -123,12 +124,38 @@ describe("MCP stdio transport", () => {
           }
         }
       }),
-      JSON.stringify({ jsonrpc: "2.0", id: 4, method: "ping" })
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/call",
+        params: {
+          name: "meraki_record_feedback",
+          arguments: {
+            tenantId: "tenant-a",
+            subjectId: "user-a",
+            actorId: "user-a",
+            runId: "stdio-feedback",
+            taskType: "email",
+            activityType: "edit",
+            content: "Use a concise subject",
+            scope: { level: "project", ref: "acme" },
+            mode: "concise",
+            payload: { before: "Long subject", after: "Concise subject" }
+          }
+        }
+      }),
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 5,
+        method: "tools/call",
+        params: { name: "meraki_list_candidates", arguments: {} }
+      }),
+      JSON.stringify({ jsonrpc: "2.0", id: 6, method: "ping" })
     ]);
 
     expect(session.stderr).toBe("");
     expect(session.exitCode).toBe(0);
-    expect(session.responses.map((response) => response.id)).toEqual([1, 2, 3, 4]);
+    expect(session.responses.map((response) => response.id)).toEqual([1, 2, 3, 4, 5, 6]);
     expect(session.responses[0]).toMatchObject({
       jsonrpc: "2.0",
       id: 1,
@@ -140,13 +167,17 @@ describe("MCP stdio transport", () => {
     });
 
     const tools = (session.responses[1]?.result as { tools: ToolDescriptor[] }).tools;
-    expect(tools.map((tool) => tool.name)).toEqual([
+    expect(tools).toEqual(MERAKI_MCP_TOOL_DESCRIPTORS);
+    expect(tools.slice(0, 5).map((tool) => tool.name)).toEqual([
       "meraki_get_guidance",
       "meraki_get_examples",
       "meraki_explain_guidance",
       "meraki_record_feedback",
       "meraki_record_outcome"
     ]);
+    expect(tools.map((tool) => tool.name)).toContain("meraki_propose_candidate");
+    expect(tools.map((tool) => tool.name)).toContain("meraki_approve_candidate");
+    expect(tools.map((tool) => tool.name)).toContain("meraki_get_learning_trace");
     expect(tools.every((tool) => tool.description.length > 20)).toBe(true);
     expect(tools.find((tool) => tool.name === "meraki_get_guidance")?.inputSchema).toMatchObject({
       type: "object",
@@ -183,7 +214,18 @@ describe("MCP stdio transport", () => {
     expect(JSON.parse(result.content[0]?.text ?? "{}")).toMatchObject({
       pack: { hash: expect.stringMatching(/^sha256:/) }
     });
-    expect(session.responses[3]).toEqual({ jsonrpc: "2.0", id: 4, result: {} });
+    const feedback = session.responses[3]?.result as ToolResult;
+    expect(feedback.isError).toBeUndefined();
+    expect(JSON.parse(feedback.content[0]?.text ?? "{}")).toMatchObject({
+      evidence: {
+        source: { trust_class: "explicit_user" },
+        event: { event_type: "edit" }
+      }
+    });
+    const candidates = session.responses[4]?.result as ToolResult;
+    expect(candidates.isError).toBeUndefined();
+    expect(JSON.parse(candidates.content[0]?.text ?? "{}")).toEqual({ candidates: [] });
+    expect(session.responses[5]).toEqual({ jsonrpc: "2.0", id: 6, result: {} });
   }, 30_000);
 
   it("uses JSON-RPC errors for protocol failures and content-block errors for tool failures", async () => {

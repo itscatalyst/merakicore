@@ -200,8 +200,9 @@ export class ConnectedAgentRuntime {
     return this.engine.recordOutcome(input);
   }
 
-  learn(input: CorrectionInput) {
-    return this.engine.learn(input);
+  /** Extracts a correction into an inactive candidate. Activation remains a separate governed command. */
+  extractCorrectionLesson(eventId: string) {
+    return this.engine.extractLesson(eventId);
   }
   extractActivityLesson(input: ActivityLessonInput) {
     return this.engine.extractActivityLesson(input);
@@ -502,10 +503,16 @@ export const evaluateConnectedCausalComparison = (input: ConnectedCausalInput): 
   const experimentId = input.experimentId ?? randomUUID();
   const baselineRuntime = new ConnectedAgentRuntime();
   const merakiRuntime = new ConnectedAgentRuntime();
-  const receipt = merakiRuntime.learn(input.correction);
-  const guidance = receipt.lesson.guidance;
+  const evidence = merakiRuntime.correction(input.correction);
+  const candidate = merakiRuntime.extractCorrectionLesson(evidence.eventId);
+  if (candidate.lifecycle !== "candidate") throw new Error("CAUSAL_CANDIDATE_REQUIRED");
+  const preApproval = merakiRuntime.retrieve(input.related.context);
+  if (preApproval.pack.atom_manifest.some((atom) => atom.id === candidate.id))
+    throw new Error("CAUSAL_CANDIDATE_ACTIVATED_BEFORE_APPROVAL");
+  const lesson = merakiRuntime.approve(candidate.id, candidate.version);
+  const guidance = lesson.guidance;
   const ablatedRuntime = ConnectedAgentRuntime.fromSnapshot(merakiRuntime.snapshot());
-  ablatedRuntime.revoke(receipt.lesson.id, receipt.lesson.version);
+  ablatedRuntime.revoke(lesson.id, lesson.version);
   const rawMemoryRuntime = new ConnectedAgentRuntime();
   const baseline: ConnectedCausalArm = {
     related: baselineRuntime.run(input.related),

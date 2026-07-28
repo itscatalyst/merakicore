@@ -28,6 +28,8 @@ export type UpdateProposalCommandInput = Readonly<{
 export type AtomCommandInput = Readonly<{
   atomId: string;
   expectedVersion: number;
+  requiredLifecycles?: readonly ProfileAtom["lifecycle"][];
+  reason?: string;
   operation: "confirm" | "edit" | "rescope" | "limit" | "revoke" | "supersede" | "weaken" | "split";
   claim?: string;
   claims?: readonly string[];

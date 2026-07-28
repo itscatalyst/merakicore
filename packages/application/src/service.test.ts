@@ -267,6 +267,129 @@ describe("Meraki application command boundary", () => {
     expect(unitOfWork.auditEvents()).toEqual([]);
   });
 
+  it("keeps candidate-only rescope and rejection guards from mutating an active atom", async () => {
+    const runtime = new ConnectedAgentRuntime();
+    const active = seedApprovedAtom(runtime, {
+      suffix: "candidate-only",
+      claim: "For email, use concise subject lines."
+    });
+    const before = runtime.snapshot();
+    const persist = vi.fn(() => Promise.resolve());
+    const { application, unitOfWork } = createInMemoryApplication(runtime, persist);
+
+    await expect(
+      application.mutate(authority(), {
+        requestId: "candidate-rescope-active",
+        idempotencyKey: "candidate-rescope-active",
+        command: {
+          name: "command_atom",
+          input: {
+            atomId: active.id,
+            expectedVersion: active.version,
+            requiredLifecycles: ["candidate"],
+            operation: "rescope",
+            scope: { level: "project", ref: "other-project" }
+          }
+        }
+      })
+    ).rejects.toMatchObject({ code: "ATOM_LIFECYCLE_PRECONDITION_FAILED" });
+    await expect(
+      application.mutate(authority(), {
+        requestId: "candidate-reject-active",
+        idempotencyKey: "candidate-reject-active",
+        command: {
+          name: "command_atom",
+          input: {
+            atomId: active.id,
+            expectedVersion: active.version,
+            requiredLifecycles: ["candidate"],
+            operation: "revoke"
+          }
+        }
+      })
+    ).rejects.toMatchObject({ code: "ATOM_LIFECYCLE_PRECONDITION_FAILED" });
+
+    expect((await unitOfWork.currentRuntime()).snapshot()).toEqual(before);
+    expect(persist).not.toHaveBeenCalled();
+    expect(unitOfWork.auditEvents()).toMatchObject([
+      { outcome: "failed", errorCode: "ATOM_LIFECYCLE_PRECONDITION_FAILED", revision: 0 },
+      { outcome: "failed", errorCode: "ATOM_LIFECYCLE_PRECONDITION_FAILED", revision: 0 }
+    ]);
+  });
+
+  it("fails a stale candidate lifecycle precondition atomically without persistence", async () => {
+    const runtime = new ConnectedAgentRuntime();
+    const activity = runtime.activity({
+      tenantId: "tenant-a",
+      subjectId: "user-a",
+      actorId: "user-a",
+      runId: "seed-stale-lifecycle",
+      taskType: "email",
+      activityType: "edit",
+      content: "Explicit edit stale lifecycle",
+      scope: projectScope,
+      mode: "concise",
+      payload: { before: "Long subject", after: "Short subject" }
+    });
+    const candidate = runtime.extractActivityLesson({
+      eventId: activity.event.id,
+      claim: "For email, use concise subject lines.",
+      facet: "communication",
+      temporalHorizon: "ongoing"
+    });
+    const persist = vi.fn(() => Promise.resolve());
+    const { application, unitOfWork } = createInMemoryApplication(runtime, persist);
+    const staleRescope = {
+      requestId: "stale-candidate-rescope",
+      idempotencyKey: "stale-candidate-rescope",
+      command: {
+        name: "command_atom" as const,
+        input: {
+          atomId: candidate.id,
+          expectedVersion: candidate.version,
+          requiredLifecycles: ["candidate"] as const,
+          operation: "rescope" as const,
+          scope: { level: "project" as const, ref: "other-project" }
+        }
+      }
+    };
+
+    const approval = await application.mutate(authority(), {
+      requestId: "activate-candidate",
+      idempotencyKey: "activate-candidate",
+      command: {
+        name: "command_atom",
+        input: {
+          atomId: candidate.id,
+          expectedVersion: candidate.version,
+          requiredLifecycles: ["candidate"],
+          operation: "confirm"
+        }
+      }
+    });
+    await expect(application.mutate(authority(), staleRescope)).rejects.toMatchObject({
+      code: "ATOM_LIFECYCLE_PRECONDITION_FAILED"
+    });
+
+    const current = (await unitOfWork.currentRuntime()).profileAtoms().find((atom) => atom.id === candidate.id);
+    expect(approval.value).toMatchObject({ lifecycle: "active", version: candidate.version + 1 });
+    expect(current).toMatchObject({
+      lifecycle: "active",
+      version: candidate.version + 1,
+      scope: projectScope
+    });
+    expect(persist).toHaveBeenCalledTimes(1);
+    expect(unitOfWork.auditEvents()).toMatchObject([
+      { outcome: "committed", revision: 1 },
+      {
+        outcome: "failed",
+        errorCode: "ATOM_LIFECYCLE_PRECONDITION_FAILED",
+        revision: 1
+      }
+    ]);
+    expect(unitOfWork.auditEvents()[1]?.afterHash).toBe(unitOfWork.auditEvents()[1]?.beforeHash);
+  });
+
   it("rechecks sensitive atom authority before an idempotent replay", async () => {
     const runtime = new ConnectedAgentRuntime();
     const atom = seedApprovedAtom(runtime, {
@@ -594,6 +717,18 @@ describe("Meraki application read isolation", () => {
         name: "list_update_proposals"
       })
     ).toEqual([proposal]);
+    await expect(
+      application.query(authority({ scopes: ["profile:read"] }), {
+        name: "learning_trace",
+        input: { eventId: evidenceEventId }
+      })
+    ).rejects.toThrow("LEARNING_TRACE_NOT_FOUND");
+    expect(
+      await application.query(authority({ scopes: ["profile:read", "profile:write:sensitive"] }), {
+        name: "learning_trace",
+        input: { eventId: evidenceEventId }
+      })
+    ).toMatchObject({ atom: { id: atom.id } });
     await expect(
       application.mutate(authority({ scopes: ["profile:write"] }), {
         requestId: "sensitive-proposal-approve",

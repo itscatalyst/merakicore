@@ -1,0 +1,23 @@
+{
+  "name": "@meraki/mcp-tools",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty false"
+  },
+  "dependencies": {
+    "@meraki/application": "workspace:*",
+    "@meraki/auth": "workspace:*",
+    "@meraki/contracts": "workspace:*",
+    "@meraki/core": "workspace:*",
+    "ajv": "8.20.0"
+  }
+}

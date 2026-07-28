@@ -1,8 +1,8 @@
 import {
   buildMcpAdapterFromEnvironment,
-  MERAKI_MCP_TOOLS,
-  MerakiMcpAdapter,
-  type McpRequest,
+  isMerakiMcpTool,
+  MERAKI_MCP_TOOL_DESCRIPTORS,
+  MerakiMcpRegistry,
   type McpResponse
 } from "./index.js";
 
@@ -26,134 +26,6 @@ const jsonRpcId = (value: unknown): JsonRpcId =>
 const emitError = (id: JsonRpcId, code: number, message: string): void => {
   emit({ jsonrpc: "2.0", id, error: { code, message } });
 };
-const nonEmptyString = { type: "string", minLength: 1 } as const;
-const scopeSchema = {
-  oneOf: [
-    {
-      type: "object",
-      properties: {
-        level: { const: "user" },
-        ref: nonEmptyString
-      },
-      required: ["level"],
-      additionalProperties: false
-    },
-    {
-      type: "object",
-      properties: {
-        level: {
-          enum: ["run", "task", "project", "mode", "domain", "workspace", "relationship", "team"]
-        },
-        ref: nonEmptyString
-      },
-      required: ["level", "ref"],
-      additionalProperties: false
-    }
-  ]
-} as const;
-const taskContextSchema = {
-  type: "object",
-  properties: {
-    contract: { const: "task_context" },
-    tenant_id: nonEmptyString,
-    subject_id: nonEmptyString,
-    task_id: nonEmptyString,
-    task_type: nonEmptyString,
-    scope: scopeSchema,
-    mode: nonEmptyString,
-    goal_id: nonEmptyString,
-    constraints: { type: "array", items: { type: "string" } },
-    permissions: { type: "array", items: nonEmptyString, uniqueItems: true },
-    token_budget: { type: "integer", minimum: 0 }
-  },
-  required: [
-    "contract",
-    "tenant_id",
-    "subject_id",
-    "task_id",
-    "task_type",
-    "scope",
-    "constraints",
-    "permissions",
-    "token_budget"
-  ],
-  additionalProperties: false
-} as const;
-const contextInputSchema = {
-  type: "object",
-  properties: { context: taskContextSchema },
-  required: ["context"],
-  additionalProperties: false
-} as const;
-const consentSchema = {
-  type: "object",
-  properties: {
-    status: { enum: ["granted", "denied", "revoked"] },
-    purposes: { type: "array", items: { type: "string" }, uniqueItems: true },
-    recorded_at: { type: "string", format: "date-time" }
-  },
-  required: ["status", "purposes", "recorded_at"],
-  additionalProperties: false
-} as const;
-const feedbackInputSchema = {
-  type: "object",
-  properties: {
-    tenantId: nonEmptyString,
-    subjectId: nonEmptyString,
-    actorId: nonEmptyString,
-    runId: nonEmptyString,
-    taskType: nonEmptyString,
-    activityType: {
-      enum: ["approval", "rejection", "choice", "correction", "edit", "example", "workflow_action", "outcome"]
-    },
-    content: nonEmptyString,
-    scope: scopeSchema,
-    mode: nonEmptyString,
-    payload: { type: "object", additionalProperties: true },
-    consent: consentSchema
-  },
-  required: ["tenantId", "subjectId", "actorId", "runId", "taskType", "activityType", "content", "scope"],
-  additionalProperties: false
-} as const;
-const outcomeInputSchema = {
-  type: "object",
-  properties: {
-    tenantId: nonEmptyString,
-    subjectId: nonEmptyString,
-    runId: nonEmptyString,
-    outcomeType: nonEmptyString,
-    outcome: { type: "object", additionalProperties: true },
-    scope: scopeSchema,
-    mode: nonEmptyString
-  },
-  required: ["tenantId", "subjectId", "runId", "outcomeType", "outcome", "scope"],
-  additionalProperties: false
-} as const;
-const toolDefinitions = {
-  meraki_get_guidance: {
-    description: "Retrieve scoped, active Meraki guidance for one authenticated task context.",
-    inputSchema: contextInputSchema
-  },
-  meraki_get_examples: {
-    description: "Retrieve scoped guidance as examples with atom provenance.",
-    inputSchema: contextInputSchema
-  },
-  meraki_explain_guidance: {
-    description: "Explain which profile candidates were included or excluded from a guidance pack.",
-    inputSchema: contextInputSchema
-  },
-  meraki_record_feedback: {
-    description: "Record explicit user feedback as immutable evidence; this does not activate a profile rule.",
-    inputSchema: feedbackInputSchema
-  },
-  meraki_record_outcome: {
-    description: "Record an externally observed outcome as immutable evidence.",
-    inputSchema: outcomeInputSchema
-  }
-} as const satisfies Record<McpRequest["name"], { description: string; inputSchema: object }>;
-const toolDescriptors = MERAKI_MCP_TOOLS.map((name) => ({ name, ...toolDefinitions[name] }));
-const isToolName = (value: string): value is McpRequest["name"] =>
-  (MERAKI_MCP_TOOLS as readonly string[]).includes(value);
 const callToolResult = (response: McpResponse) => {
   const serialized = JSON.stringify(response.content);
   return {
@@ -162,8 +34,8 @@ const callToolResult = (response: McpResponse) => {
   };
 };
 
-/** Minimal newline-delimited MCP host transport. Stdout is protocol-only; diagnostics stay on stderr. */
-export const runStdioTransport = async (adapter: MerakiMcpAdapter): Promise<void> => {
+/** Newline-delimited stdio framing only. All tool semantics and descriptors live in @meraki/mcp-tools. */
+export const runStdioTransport = async (registry: MerakiMcpRegistry): Promise<void> => {
   process.stdin.setEncoding("utf8");
   let buffer = "";
   let pending = Promise.resolve();
@@ -191,8 +63,8 @@ export const runStdioTransport = async (adapter: MerakiMcpAdapter): Promise<void
       emitError(null, -32600, "Invalid Request");
       return;
     }
-    // MCP requests require an id. Do not execute request-shaped notifications,
-    // especially mutation tools, because the caller cannot receive a result.
+    // Never execute request-shaped notifications, especially mutations:
+    // a caller without an id cannot receive or reconcile the result.
     if (!hasId) return;
     try {
       if (rpc.method === "initialize") {
@@ -204,13 +76,13 @@ export const runStdioTransport = async (adapter: MerakiMcpAdapter): Promise<void
       } else if (rpc.method === "ping") {
         emit({ jsonrpc: "2.0", id, result: {} });
       } else if (rpc.method === "tools/list") {
-        emit({ jsonrpc: "2.0", id, result: { tools: toolDescriptors } });
+        emit({ jsonrpc: "2.0", id, result: { tools: MERAKI_MCP_TOOL_DESCRIPTORS } });
       } else if (rpc.method === "tools/call") {
         if (!isRecord(rpc.params) || typeof rpc.params.name !== "string") {
           emitError(id, -32602, "Invalid params");
           return;
         }
-        if (!isToolName(rpc.params.name)) {
+        if (!isMerakiMcpTool(rpc.params.name)) {
           emitError(id, -32602, "Unknown tool");
           return;
         }
@@ -218,7 +90,7 @@ export const runStdioTransport = async (adapter: MerakiMcpAdapter): Promise<void
           emitError(id, -32602, "Invalid params");
           return;
         }
-        const response = await adapter.handle({
+        const response = await registry.handle({
           name: rpc.params.name,
           arguments: rpc.params.arguments ?? {}
         });
@@ -241,17 +113,12 @@ export const runStdioTransport = async (adapter: MerakiMcpAdapter): Promise<void
     const finish = (): void => {
       if (settled) return;
       settled = true;
-      // Release the stdin handle after the host has signalled EOF so Node can
-      // terminate naturally; this is stream cleanup, not process termination.
       process.stdin.destroy();
       resolve();
     };
     process.stdin.once("end", finish);
     process.stdin.once("close", finish);
   });
-  // Install EOF listeners before entering flowing mode. Otherwise a fast
-  // writer can close stdin between resume() and listener registration,
-  // leaving the transport waiting forever despite having received EOF.
   process.stdin.resume();
   await inputClosed;
   if (buffer.trim()) pending = pending.then(() => handleLine(buffer));

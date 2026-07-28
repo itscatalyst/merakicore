@@ -122,7 +122,7 @@ for (const [identityIndex, identity] of identities.entries()) {
   for (const [profileIndex, profile] of taskProfiles.entries()) {
     const seedRunId = `seed-${identityIndex}-${profile.taskType}`;
     seedRunIds.add(seedRunId);
-    const receipt = runtime.learn({
+    const evidence = runtime.correction({
       tenantId: identity.tenantId,
       subjectId: identity.subjectId,
       actorId: identity.actorId,
@@ -133,7 +133,25 @@ for (const [identityIndex, identity] of identities.entries()) {
       scope: profile.scope,
       mode: profile.mode
     });
-    seedLessons.set(`${identityIndex}:${profileIndex}`, receipt.lesson);
+    const candidate = runtime.extractCorrectionLesson(evidence.eventId);
+    if (candidate.lifecycle !== "candidate") throw new Error("SYNTHETIC_CANDIDATE_REQUIRED");
+    const beforeApproval = runtime.retrieve({
+      contract: "task_context",
+      tenant_id: identity.tenantId,
+      subject_id: identity.subjectId,
+      task_id: `${seedRunId}-preapproval`,
+      task_type: profile.taskType,
+      scope: profile.scope,
+      mode: profile.mode,
+      constraints: [],
+      permissions: [],
+      token_budget: 1000
+    });
+    if (beforeApproval.pack.atom_manifest.some((atom) => atom.id === candidate.id)) {
+      throw new Error("SYNTHETIC_CANDIDATE_ACTIVATED_BEFORE_APPROVAL");
+    }
+    const lesson = runtime.approve(candidate.id, candidate.version);
+    seedLessons.set(`${identityIndex}:${profileIndex}`, lesson);
   }
 }
 

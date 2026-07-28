@@ -58,11 +58,6 @@ export type ActivityLessonInput = Readonly<{
   temporalHorizon?: ProfileAtom["temporal_horizon"];
 }>;
 
-export type LearningReceipt = Readonly<{
-  evidence: ImmutableCorrection;
-  lesson: Lesson;
-  pack: MerakiPack;
-}>;
 export type LearningTrace = Readonly<{
   source: SourceRecord;
   event: Event;
@@ -405,24 +400,6 @@ export class LearningEngine {
     );
   }
 
-  learn(input: CorrectionInput): LearningReceipt {
-    const evidence = this.recordCorrection(input);
-    const extracted = this.extractLesson(evidence.eventId);
-    const lesson = extracted.lifecycle === "candidate" ? this.approve(extracted.id, extracted.version) : extracted;
-    const retrieved = this.retrieve({
-      contract: "task_context",
-      tenant_id: input.tenantId,
-      subject_id: input.subjectId,
-      task_id: input.runId,
-      task_type: input.taskType,
-      scope: input.scope,
-      ...(input.mode === undefined ? {} : { mode: input.mode }),
-      constraints: [],
-      permissions: [],
-      token_budget: 1000
-    });
-    return { evidence, lesson, pack: retrieved.pack };
-  }
   getEvidence(eventId: string): ImmutableCorrection {
     const evidence = this.evidence.get(eventId);
     if (!evidence) throw new Error("EVIDENCE_NOT_FOUND");
@@ -539,6 +516,7 @@ export class LearningEngine {
       const atom = engine.profile.current(lesson.id);
       const event = engine.evidenceLedger.getEvent(lesson.sourceEventId);
       const scope = parseScope(lesson.scope);
+      const evidenceScope = parseScope(event.payload.scope);
       const { guidance, sourceEventId, observationId, signalId, hypothesisId, ...lessonAtom } = lesson;
       const observation = engine.evidenceLedger.getObservation(observationId);
       const signal = engine.evidenceLedger.getSignal(signalId);
@@ -562,12 +540,12 @@ export class LearningEngine {
         signal.tenant_id !== lesson.tenant_id ||
         signal.subject_id !== lesson.subject_id ||
         !signal.observation_ids.includes(observation.id) ||
-        signal.scope.level !== scope.level ||
-        signal.scope.ref !== scope.ref ||
+        signal.scope.level !== evidenceScope.level ||
+        signal.scope.ref !== evidenceScope.ref ||
         hypothesis.tenant_id !== lesson.tenant_id ||
         hypothesis.subject_id !== lesson.subject_id ||
-        hypothesis.scope.level !== scope.level ||
-        hypothesis.scope.ref !== scope.ref ||
+        hypothesis.scope.level !== evidenceScope.level ||
+        hypothesis.scope.ref !== evidenceScope.ref ||
         !hypothesis.evidence.some((reference) => reference.event_id === event.id)
       )
         throw new Error("SNAPSHOT_LESSON_LINEAGE_INVALID");
