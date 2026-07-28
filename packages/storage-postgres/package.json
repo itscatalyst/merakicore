@@ -1,5 +1,5 @@
 {
-  "name": "@meraki/api",
+  "name": "@meraki/storage-postgres",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -11,14 +11,13 @@
   },
   "scripts": {
     "build": "tsc -b",
-    "typecheck": "tsc -b --pretty false"
+    "typecheck": "tsc -b --pretty false",
+    "test": "vitest run src"
   },
   "dependencies": {
     "@meraki/application": "workspace:*",
     "@meraki/auth": "workspace:*",
-    "@meraki/contracts": "workspace:*",
     "@meraki/core": "workspace:*",
-    "@meraki/storage-local": "workspace:*",
-    "fastify": "^5.8.5"
+    "postgres": "3.4.9"
   }
 }

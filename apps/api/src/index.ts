@@ -3,6 +3,14 @@ import { pathToFileURL } from "node:url";
 import type { ProfileAtom, TaskContext } from "@meraki/contracts";
 import type { ExplicitActivityType } from "@meraki/core";
 import {
+  createInMemoryApplication,
+  type CommandResult,
+  type MerakiApplication,
+  type MerakiCommand,
+  type MutationEnvelope,
+  type MutationReceipt
+} from "@meraki/application";
+import {
   assertAuthenticatedIdentity,
   requestAuthenticatorFromEnvironment,
   requireScopes,
@@ -94,7 +102,14 @@ const errorStatus = (code: string, fallbackStatus = 422): number => {
   if (code === "invalid_token" || code === "missing_token" || code === "malformed_token") return 401;
   if (code === "identity_mismatch" || code === "insufficient_scope") return 403;
   if (code.includes("NOT_FOUND")) return 404;
-  if (code.includes("VERSION_CONFLICT") || code.includes("NOT_PENDING") || code.includes("NOT_APPLIED")) return 409;
+  if (code === "PERSISTENCE_FAILED") return 500;
+  if (
+    code.includes("VERSION_CONFLICT") ||
+    code.includes("NOT_PENDING") ||
+    code.includes("NOT_APPLIED") ||
+    code === "IDEMPOTENCY_CONFLICT"
+  )
+    return 409;
   return fallbackStatus;
 };
 const sendError = (reply: FastifyReply, error: unknown, fallback: string, fallbackStatus = 422) => {
@@ -166,19 +181,26 @@ const validateRun = (value: unknown): void => {
   required(ctx.task_type, "TASK_TYPE_REQUIRED");
   scopeFromUnknown(ctx.scope);
 };
-const assertOwnedAtom = (runtime: ConnectedAgentRuntime, context: AuthenticatedContext, atomId: string): void => {
-  const atom = runtime.profileAtoms().find((candidate) => candidate.id === atomId);
-  if (atom === undefined) throw new Error("ATOM_NOT_FOUND");
-  assertAuthenticatedIdentity(context, {
-    tenantId: atom.tenant_id,
-    subjectId: atom.subject_id
-  });
+const isApplication = (value: ConnectedAgentRuntime | MerakiApplication): value is MerakiApplication =>
+  "query" in value && "mutate" in value;
+
+const idempotencyKeyFor = (request: FastifyRequest): string => {
+  const value = request.headers["idempotency-key"];
+  if (
+    Array.isArray(value) ||
+    (value !== undefined && (typeof value !== "string" || !value.trim() || value.length > 255))
+  )
+    throw new Error("IDEMPOTENCY_KEY_INVALID");
+  return value ?? `request:${request.id}`;
 };
 
 export const buildServer = (
-  runtime = new ConnectedAgentRuntime(),
+  runtimeOrApplication: ConnectedAgentRuntime | MerakiApplication = new ConnectedAgentRuntime(),
   authentication: RequestAuthenticator | AuthenticatedContext = requestAuthenticatorFromEnvironment()
 ): FastifyInstance => {
+  const application = isApplication(runtimeOrApplication)
+    ? runtimeOrApplication
+    : createInMemoryApplication(runtimeOrApplication).application;
   const authenticator =
     "authenticate" in authentication ? authentication : new StaticRequestAuthenticator(authentication);
   const requestContexts = new WeakMap<FastifyRequest, AuthenticatedContext>();
@@ -186,6 +208,17 @@ export const buildServer = (
     const context = requestContexts.get(request);
     if (context === undefined) throw new Error("AUTHENTICATED_CONTEXT_REQUIRED");
     return requireScopes(context, scopes);
+  };
+  const mutate = <C extends MerakiCommand>(
+    request: FastifyRequest,
+    command: C
+  ): Promise<MutationReceipt<CommandResult<C>>> => {
+    const envelope: MutationEnvelope<C> = {
+      requestId: String(request.id),
+      idempotencyKey: idempotencyKeyFor(request),
+      command
+    };
+    return application.mutate(contextFor(request), envelope);
   };
   const server = Fastify({
     logger: process.env.NODE_ENV !== "test",
@@ -225,14 +258,17 @@ export const buildServer = (
       validateCorrection(request.body);
       const context = contextFor(request, ["evidence:write"]);
       assertAuthenticatedIdentity(context, request.body);
-      const evidence = runtime.correction({
-        ...request.body,
-        tenantId: context.tenantId,
-        subjectId: context.subjectId,
-        actorId: context.actorId,
-        scope: scopeFromUnknown(request.body.scope)
+      const receipt = await mutate(request, {
+        name: "record_correction",
+        input: {
+          ...request.body,
+          tenantId: context.tenantId,
+          subjectId: context.subjectId,
+          actorId: context.actorId,
+          scope: scopeFromUnknown(request.body.scope)
+        }
       });
-      return reply.code(201).send({ evidence });
+      return reply.code(201).send({ evidence: receipt.value });
     } catch (error) {
       return sendError(reply, error, "INVALID_CORRECTION");
     }
@@ -242,14 +278,18 @@ export const buildServer = (
       validateActivity(request.body);
       const context = contextFor(request, ["evidence:write"]);
       assertAuthenticatedIdentity(context, request.body);
-      return reply.code(201).send({
-        evidence: runtime.activity({
+      const receipt = await mutate(request, {
+        name: "record_activity",
+        input: {
           ...request.body,
           tenantId: context.tenantId,
           subjectId: context.subjectId,
           actorId: context.actorId,
           scope: scopeFromUnknown(request.body.scope)
-        })
+        }
+      });
+      return reply.code(201).send({
+        evidence: receipt.value
       });
     } catch (error) {
       return sendError(reply, error, "INVALID_ACTIVITY");
@@ -260,13 +300,17 @@ export const buildServer = (
       validateOutcome(request.body);
       const context = contextFor(request, ["evidence:write"]);
       assertAuthenticatedIdentity(context, request.body);
-      return reply.code(201).send({
-        evidence: runtime.outcome({
+      const receipt = await mutate(request, {
+        name: "record_outcome",
+        input: {
           ...request.body,
           tenantId: context.tenantId,
           subjectId: context.subjectId,
           scope: scopeFromUnknown(request.body.scope)
-        })
+        }
+      });
+      return reply.code(201).send({
+        evidence: receipt.value
       });
     } catch (error) {
       return sendError(reply, error, "INVALID_OUTCOME");
@@ -274,18 +318,18 @@ export const buildServer = (
   });
   server.post<{ Body: ActivityLessonBody }>("/v1/learning/candidates", async (request, reply) => {
     try {
-      const sourceTrace = runtime.learningTrace(request.body.event_id);
-      assertAuthenticatedIdentity(contextFor(request, ["profile:write"]), {
-        tenantId: sourceTrace.event.tenant_id,
-        subjectId: sourceTrace.event.subject_id
-      });
-      return reply.code(201).send({
-        lesson: runtime.extractActivityLesson({
+      contextFor(request, ["profile:write"]);
+      const receipt = await mutate(request, {
+        name: "extract_candidate",
+        input: {
           eventId: request.body.event_id,
           claim: request.body.claim,
           ...(request.body.facet === undefined ? {} : { facet: request.body.facet }),
           ...(request.body.temporal_horizon === undefined ? {} : { temporalHorizon: request.body.temporal_horizon })
-        })
+        }
+      });
+      return reply.code(201).send({
+        lesson: receipt.value
       });
     } catch (error) {
       return sendError(reply, error, "INVALID_ACTIVITY_LESSON");
@@ -299,34 +343,34 @@ export const buildServer = (
         tenantId: request.body.context.tenant_id,
         subjectId: request.body.context.subject_id
       });
-      const result = runtime.run({
-        ...request.body,
-        context: {
-          ...request.body.context,
-          tenant_id: context.tenantId,
-          subject_id: context.subjectId,
-          scope: scopeFromUnknown(request.body.context.scope)
+      const receipt = await mutate(request, {
+        name: "run_agent",
+        input: {
+          ...request.body,
+          context: {
+            ...request.body.context,
+            tenant_id: context.tenantId,
+            subject_id: context.subjectId,
+            scope: scopeFromUnknown(request.body.context.scope)
+          }
         }
       });
-      return reply.send(result);
+      return reply.send(receipt.value);
     } catch (error) {
       return sendError(reply, error, "INVALID_RUN");
     }
   });
-  server.get("/v1/profile/atoms", (request) => {
+  server.get("/v1/profile/atoms", async (request) => {
     const context = contextFor(request, ["profile:read"]);
     return {
-      items: runtime
-        .profileAtoms()
-        .filter((atom) => atom.tenant_id === context.tenantId && atom.subject_id === context.subjectId)
+      items: await application.query(context, { name: "list_atoms" })
     };
   });
   server.get<{ Params: { eventId: string } }>("/v1/learning/trace/:eventId", async (request, reply) => {
     try {
-      const trace = runtime.learningTrace(request.params.eventId);
-      assertAuthenticatedIdentity(contextFor(request, ["profile:read"]), {
-        tenantId: trace.event.tenant_id,
-        subjectId: trace.event.subject_id
+      const trace = await application.query(contextFor(request, ["profile:read"]), {
+        name: "learning_trace",
+        input: { eventId: request.params.eventId }
       });
       return reply.send({ trace });
     } catch (error) {
@@ -335,29 +379,34 @@ export const buildServer = (
   });
   server.get<{ Params: { id: string } }>("/v1/profile/atoms/:id/trace", async (request, reply) => {
     try {
-      const trace = runtime.learningTraceForAtom(request.params.id);
-      assertAuthenticatedIdentity(contextFor(request, ["profile:read"]), {
-        tenantId: trace.event.tenant_id,
-        subjectId: trace.event.subject_id
+      const trace = await application.query(contextFor(request, ["profile:read"]), {
+        name: "atom_trace",
+        input: { atomId: request.params.id }
       });
       return reply.send({ trace });
     } catch (error) {
       return sendError(reply, error, "ATOM_TRACE_NOT_FOUND");
     }
   });
-  server.get("/v1/update-proposals", (request) => {
+  server.get("/v1/update-proposals", async (request) => {
     const context = contextFor(request, ["profile:read"]);
     return {
-      items: runtime
-        .updateProposals()
-        .filter((proposal) => proposal.tenant_id === context.tenantId && proposal.subject_id === context.subjectId)
+      items: await application.query(context, { name: "list_update_proposals" })
     };
   });
   server.post<{ Body: UpdateProposalBody }>("/v1/update-proposals", async (request, reply) => {
     try {
-      assertOwnedAtom(runtime, contextFor(request, ["profile:write"]), request.body.lesson_id);
+      contextFor(request, ["profile:write"]);
+      const receipt = await mutate(request, {
+        name: "propose_update",
+        input: {
+          lessonId: request.body.lesson_id,
+          evidenceEventId: request.body.evidence_event_id,
+          operation: request.body.operation
+        }
+      });
       return reply.code(201).send({
-        proposal: runtime.proposeUpdate(request.body.lesson_id, request.body.evidence_event_id, request.body.operation)
+        proposal: receipt.value
       });
     } catch (error) {
       return sendError(reply, error, "INVALID_UPDATE_PROPOSAL");
@@ -368,19 +417,15 @@ export const buildServer = (
     async (request, reply) => {
       try {
         if (!updateProposalCommands.has(request.body.operation)) throw new Error("UPDATE_PROPOSAL_OPERATION_INVALID");
-        const proposal = runtime.updateProposals().find((candidate) => candidate.id === request.params.id);
-        if (proposal === undefined) return reply.code(404).send({ error: "UPDATE_PROPOSAL_NOT_FOUND" });
-        assertAuthenticatedIdentity(contextFor(request, ["profile:write"]), {
-          tenantId: proposal.tenant_id,
-          subjectId: proposal.subject_id
+        contextFor(request, ["profile:write"]);
+        const receipt = await mutate(request, {
+          name: "command_update_proposal",
+          input: {
+            proposalId: request.params.id,
+            operation: request.body.operation
+          }
         });
-        const result =
-          request.body.operation === "approve"
-            ? runtime.applyUpdateProposal(request.params.id)
-            : request.body.operation === "reject"
-              ? { proposal: runtime.rejectUpdateProposal(request.params.id) }
-              : runtime.rollbackUpdateProposal(request.params.id);
-        return reply.send(result);
+        return reply.send(receipt.value);
       } catch (error) {
         return sendError(reply, error, "INVALID_UPDATE_PROPOSAL_COMMAND");
       }
@@ -390,9 +435,10 @@ export const buildServer = (
     try {
       const context = contextFor(request, ["profile:read"]);
       const limit = boundedListLimit(request.query.limit);
-      const visible = runtime
-        .recentRuns()
-        .filter((run) => run.context.tenant_id === context.tenantId && run.context.subject_id === context.subjectId);
+      const visible = await application.query(context, {
+        name: "list_runs",
+        input: {}
+      });
       return reply.send({
         items: limit === undefined ? visible : visible.slice(0, limit),
         total: visible.length,
@@ -405,15 +451,10 @@ export const buildServer = (
       return sendError(reply, error, "INVALID_RUN_LIST");
     }
   });
-  server.get("/v1/evaluations", (request) => {
+  server.get("/v1/evaluations", async (request) => {
     const context = contextFor(request, ["profile:read"]);
     return {
-      items: runtime
-        .evaluations()
-        .filter(
-          (entry) =>
-            entry.evaluation.tenant_id === context.tenantId && entry.evaluation.subject_id === context.subjectId
-        )
+      items: await application.query(context, { name: "list_evaluations" })
     };
   });
   server.post<{ Body: CausalEvaluationBody }>("/v1/evaluations/causal", async (request, reply) => {
@@ -464,12 +505,7 @@ export const buildServer = (
   });
   server.post<{ Body: EvaluationBody }>("/v1/evaluations", async (request, reply) => {
     try {
-      const run = runtime.getRun(request.body.run_id);
-      if (run === undefined) return reply.code(404).send({ error: "RUN_NOT_FOUND" });
-      assertAuthenticatedIdentity(contextFor(request, ["evaluation:write"]), {
-        tenantId: run.context.tenant_id,
-        subjectId: run.context.subject_id
-      });
+      contextFor(request, ["evaluation:write"]);
       const {
         run_id,
         experiment_id,
@@ -481,8 +517,9 @@ export const buildServer = (
         reason,
         evaluator_identity_digest
       } = request.body;
-      return reply.code(201).send({
-        record: runtime.recordEvaluation({
+      const receipt = await mutate(request, {
+        name: "record_evaluation",
+        input: {
           runId: run_id,
           experimentId: experiment_id,
           armId: arm_id,
@@ -492,51 +529,47 @@ export const buildServer = (
           uncertainty,
           ...(reason === undefined ? {} : { reason }),
           ...(evaluator_identity_digest === undefined ? {} : { evaluatorIdentityDigest: evaluator_identity_digest })
-        })
+        }
+      });
+      return reply.code(201).send({
+        record: receipt.value
       });
     } catch (error) {
       return sendError(reply, error, "INVALID_EVALUATION");
     }
   });
   server.get<{ Params: { runId: string } }>("/v1/runs/:runId", async (request, reply) => {
-    const run = runtime.getRun(request.params.runId);
-    if (run === undefined) return reply.code(404).send({ error: "RUN_NOT_FOUND" });
-    assertAuthenticatedIdentity(contextFor(request, ["profile:read"]), {
-      tenantId: run.context.tenant_id,
-      subjectId: run.context.subject_id
+    const run = await application.query(contextFor(request, ["profile:read"]), {
+      name: "get_run",
+      input: { runId: request.params.runId }
     });
+    if (run === undefined) return reply.code(404).send({ error: "RUN_NOT_FOUND" });
     return reply.send(run);
   });
   server.post<{ Params: { id: string }; Body: AtomCommandBody }>(
     "/v1/profile/atoms/:id/commands",
     async (request, reply) => {
       try {
-        assertOwnedAtom(runtime, contextFor(request, ["profile:write"]), request.params.id);
+        contextFor(request, ["profile:write"]);
         const { operation, expected_version, claim, mode } = request.body;
         if (!atomCommands.has(operation)) throw new Error("ATOM_OPERATION_INVALID");
         if (request.body.atom_id !== request.params.id) throw new Error("ATOM_ID_MISMATCH");
-        if (operation === "split")
-          return reply.send({ atoms: runtime.split(request.params.id, request.body.claims ?? [], expected_version) });
-        const atom =
-          operation === "confirm"
-            ? runtime.approve(request.params.id, expected_version)
-            : operation === "edit"
-              ? runtime.edit(request.params.id, claim ?? "", expected_version)
-              : operation === "revoke"
-                ? runtime.revoke(request.params.id, expected_version)
-                : operation === "supersede"
-                  ? runtime.supersede(request.params.id, expected_version)
-                  : operation === "weaken"
-                    ? runtime.weaken(request.params.id, request.body.counterevidence_event_id ?? "", expected_version)
-                    : runtime.rescope(
-                        request.params.id,
-                        operation === "limit"
-                          ? { level: "task", ref: "current-task" }
-                          : scopeFromUnknown(request.body.scope),
-                        mode,
-                        expected_version
-                      );
-        return reply.send({ atom });
+        const receipt = await mutate(request, {
+          name: "command_atom",
+          input: {
+            atomId: request.params.id,
+            expectedVersion: expected_version,
+            operation,
+            ...(claim === undefined ? {} : { claim }),
+            ...(request.body.claims === undefined ? {} : { claims: request.body.claims }),
+            ...(request.body.counterevidence_event_id === undefined
+              ? {}
+              : { counterevidenceEventId: request.body.counterevidence_event_id }),
+            ...(request.body.scope === undefined ? {} : { scope: scopeFromUnknown(request.body.scope) }),
+            ...(mode === undefined ? {} : { mode })
+          }
+        });
+        return operation === "split" ? reply.send({ atoms: receipt.value }) : reply.send({ atom: receipt.value });
       } catch (error) {
         return sendError(reply, error, "INVALID_ATOM_COMMAND");
       }
@@ -552,22 +585,8 @@ export const buildPersistentServer = async (
 ): Promise<FastifyInstance> => {
   const store = new JsonConnectedRuntimeStore(path);
   const runtime = await store.load();
-  const server = buildServer(runtime, authentication);
-  let saveQueue = Promise.resolve();
-  const save = (): Promise<void> => {
-    const queued = saveQueue.catch(() => undefined).then(() => store.save(runtime));
-    saveQueue = queued;
-    return queued;
-  };
-  server.addHook("onSend", async (request, reply, payload) => {
-    if (request.method !== "GET" && request.method !== "HEAD" && reply.statusCode < 400) await save();
-    return payload;
-  });
-  server.addHook("onClose", async () => {
-    await saveQueue.catch(() => undefined);
-    await store.save(runtime);
-  });
-  return server;
+  const { application } = createInMemoryApplication(runtime, (_identity, candidate) => store.save(candidate));
+  return buildServer(application, authentication);
 };
 
 // pathToFileURL keeps the executable entrypoint check correct on Windows and POSIX.

@@ -12,7 +12,7 @@ describe("local runtime storage", () => {
       const path = join(directory, "runtime.json");
       const store = new JsonConnectedRuntimeStore(path);
       const runtime = new ConnectedAgentRuntime();
-      runtime.learn({
+      const evidence = runtime.correction({
         tenantId: "tenant-a",
         subjectId: "user-a",
         actorId: "user-a",
@@ -23,19 +23,24 @@ describe("local runtime storage", () => {
         original: "Draft an email",
         correction: "Use a concise subject line"
       });
+      const candidate = runtime.extractCorrectionLesson(evidence.eventId);
+      expect(candidate.lifecycle).toBe("candidate");
+      const taskContext = {
+        contract: "task_context" as const,
+        tenant_id: "tenant-a",
+        subject_id: "user-a",
+        task_id: "task-1",
+        task_type: "email",
+        scope: { level: "project" as const, ref: "acme" },
+        mode: "concise",
+        constraints: [],
+        permissions: [],
+        token_budget: 1000
+      };
+      expect(runtime.retrieve(taskContext).pack.items).toHaveLength(0);
+      runtime.approve(candidate.id, candidate.version);
       runtime.run({
-        context: {
-          contract: "task_context",
-          tenant_id: "tenant-a",
-          subject_id: "user-a",
-          task_id: "task-1",
-          task_type: "email",
-          scope: { level: "project", ref: "acme" },
-          mode: "concise",
-          constraints: [],
-          permissions: [],
-          token_budget: 1000
-        },
+        context: taskContext,
         request: "Draft",
         baseline: "BASELINE"
       });

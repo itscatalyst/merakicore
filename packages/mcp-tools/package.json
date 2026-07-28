@@ -1,5 +1,5 @@
 {
-  "name": "@meraki/api",
+  "name": "@meraki/mcp-tools",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -18,7 +18,6 @@
     "@meraki/auth": "workspace:*",
     "@meraki/contracts": "workspace:*",
     "@meraki/core": "workspace:*",
-    "@meraki/storage-local": "workspace:*",
-    "fastify": "^5.8.5"
+    "ajv": "8.20.0"
   }
 }

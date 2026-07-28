@@ -63,6 +63,7 @@ export const compileGuidance = (
       if (atom.mode !== undefined && atom.mode !== normalizedContext.mode) reasons.push("mode_mismatch");
       if (atom.sensitivity === "sensitive" && !normalizedContext.permissions.includes("read:sensitive"))
         reasons.push("sensitive_permission_denied");
+      if (atom.sensitivity === "prohibited_inference") reasons.push("prohibited_inference");
       const lexical = deterministicSemanticPort.score(normalizedContext, atom);
       const semanticScore = semantic.score(normalizedContext, atom);
       if (lexical === 0 && semanticScore <= 0) reasons.push("negative_control_no_task_relevance");

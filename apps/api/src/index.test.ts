@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { JwtRequestAuthenticator, signTestJwt } from "@meraki/auth";
+import { createInMemoryApplication } from "@meraki/application";
 import { buildPersistentServer, buildServer } from "./index.js";
 import { ConnectedAgentRuntime, evaluateConnectedCausalComparison } from "@meraki/core";
 import { JsonConnectedRuntimeStore } from "@meraki/storage-local";
@@ -70,6 +71,13 @@ const correction = {
   original: "Draft email",
   correction: "Use a concise subject"
 };
+const recordExtractAndApprove = (runtime: ConnectedAgentRuntime) => {
+  const evidence = runtime.correction(correction);
+  const candidate = runtime.extractCorrectionLesson(evidence.eventId);
+  expect(candidate.lifecycle).toBe("candidate");
+  expect(runtime.retrieve(context()).pack.items).toHaveLength(0);
+  return runtime.approve(candidate.id, candidate.version);
+};
 const server = testServer();
 
 beforeAll(async () => {
@@ -114,7 +122,7 @@ describe("connected agent adapter", () => {
 
   it("changes a relevant run and returns a trace, while unrelated mode stays baseline", () => {
     const runtime = new ConnectedAgentRuntime();
-    runtime.learn(correction);
+    recordExtractAndApprove(runtime);
     const related = runtime.run({ context: context(), request: "Draft", baseline: "BASELINE" });
     const unrelated = runtime.run({ context: context({ mode: "creative" }), request: "Draft", baseline: "BASELINE" });
     expect(related.output).toContain("Meraki guidance applied");
@@ -700,7 +708,7 @@ describe("connected agent adapter", () => {
 
   it("restores a connected agent with active guidance after process reconstruction", () => {
     const first = new ConnectedAgentRuntime();
-    first.learn(correction);
+    recordExtractAndApprove(first);
     const restored = ConnectedAgentRuntime.fromSnapshot(first.snapshot());
     const result = restored.run({ context: context(), request: "Draft", baseline: "BASELINE" });
     expect(result.trace.changed).toBe(true);
@@ -949,7 +957,7 @@ describe("connected agent adapter", () => {
     const directory = await mkdtemp(join(tmpdir(), "meraki-runtime-"));
     try {
       const original = new ConnectedAgentRuntime();
-      original.learn(correction);
+      recordExtractAndApprove(original);
       const run = original.run({ context: context(), request: "Draft", baseline: "BASELINE" });
       original.recordEvaluation({
         runId: run.trace.runId,
@@ -1039,5 +1047,56 @@ describe("connected agent adapter", () => {
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+
+  it("replays matching HTTP idempotency keys once and rejects conflicting reuse", async () => {
+    const { application, unitOfWork } = createInMemoryApplication();
+    const isolated = buildServer(application, testAuthority);
+    await isolated.ready();
+    const headers = { "idempotency-key": "correction-once" };
+    const first = await isolated.inject({
+      method: "POST",
+      url: "/v1/corrections",
+      headers,
+      payload: correction
+    });
+    const replay = await isolated.inject({
+      method: "POST",
+      url: "/v1/corrections",
+      headers,
+      payload: correction
+    });
+    const conflict = await isolated.inject({
+      method: "POST",
+      url: "/v1/corrections",
+      headers,
+      payload: { ...correction, correction: "Use a different subject" }
+    });
+
+    expect(first.statusCode).toBe(201);
+    expect(replay.statusCode).toBe(201);
+    expect(replay.json()).toEqual(first.json());
+    expect(conflict.statusCode).toBe(409);
+    expect(conflict.json<{ error: string }>().error).toBe("IDEMPOTENCY_CONFLICT");
+    expect((await unitOfWork.currentRuntime()).snapshot().engine.evidenceLedger.events).toHaveLength(1);
+    await isolated.close();
+  });
+
+  it("returns a retryable server error without publishing state when persistence fails", async () => {
+    const { application, unitOfWork } = createInMemoryApplication(new ConnectedAgentRuntime(), () =>
+      Promise.reject(new Error("disk unavailable"))
+    );
+    const isolated = buildServer(application, testAuthority);
+    await isolated.ready();
+    const response = await isolated.inject({
+      method: "POST",
+      url: "/v1/corrections",
+      payload: correction
+    });
+
+    expect(response.statusCode).toBe(500);
+    expect(response.json<{ error: string }>().error).toBe("PERSISTENCE_FAILED");
+    expect((await unitOfWork.currentRuntime()).snapshot().engine.evidenceLedger.events).toEqual([]);
+    await isolated.close();
   });
 });
