@@ -9,9 +9,9 @@
     "start": "node dist/stdio.js"
   },
   "dependencies": {
+    "@meraki/application": "workspace:*",
     "@meraki/auth": "workspace:*",
-    "@meraki/contracts": "workspace:*",
-    "@meraki/core": "workspace:*",
+    "@meraki/mcp-tools": "workspace:*",
     "@meraki/storage-local": "workspace:*"
   }
 }

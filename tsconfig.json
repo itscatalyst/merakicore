@@ -8,6 +8,7 @@
     { "path": "./packages/core" },
     { "path": "./packages/auth" },
     { "path": "./packages/application" },
+    { "path": "./packages/mcp-tools" },
     { "path": "./packages/storage-local" },
     { "path": "./examples/quickstart" }
   ]

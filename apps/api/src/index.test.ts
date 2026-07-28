@@ -71,6 +71,13 @@ const correction = {
   original: "Draft email",
   correction: "Use a concise subject"
 };
+const recordExtractAndApprove = (runtime: ConnectedAgentRuntime) => {
+  const evidence = runtime.correction(correction);
+  const candidate = runtime.extractCorrectionLesson(evidence.eventId);
+  expect(candidate.lifecycle).toBe("candidate");
+  expect(runtime.retrieve(context()).pack.items).toHaveLength(0);
+  return runtime.approve(candidate.id, candidate.version);
+};
 const server = testServer();
 
 beforeAll(async () => {
@@ -115,7 +122,7 @@ describe("connected agent adapter", () => {
 
   it("changes a relevant run and returns a trace, while unrelated mode stays baseline", () => {
     const runtime = new ConnectedAgentRuntime();
-    runtime.learn(correction);
+    recordExtractAndApprove(runtime);
     const related = runtime.run({ context: context(), request: "Draft", baseline: "BASELINE" });
     const unrelated = runtime.run({ context: context({ mode: "creative" }), request: "Draft", baseline: "BASELINE" });
     expect(related.output).toContain("Meraki guidance applied");
@@ -701,7 +708,7 @@ describe("connected agent adapter", () => {
 
   it("restores a connected agent with active guidance after process reconstruction", () => {
     const first = new ConnectedAgentRuntime();
-    first.learn(correction);
+    recordExtractAndApprove(first);
     const restored = ConnectedAgentRuntime.fromSnapshot(first.snapshot());
     const result = restored.run({ context: context(), request: "Draft", baseline: "BASELINE" });
     expect(result.trace.changed).toBe(true);
@@ -950,7 +957,7 @@ describe("connected agent adapter", () => {
     const directory = await mkdtemp(join(tmpdir(), "meraki-runtime-"));
     try {
       const original = new ConnectedAgentRuntime();
-      original.learn(correction);
+      recordExtractAndApprove(original);
       const run = original.run({ context: context(), request: "Draft", baseline: "BASELINE" });
       original.recordEvaluation({
         runId: run.trace.runId,

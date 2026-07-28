@@ -24,6 +24,8 @@ export type RuntimeTransactionMetadata = Readonly<{
   actorId: string;
   sessionId: string;
   scopes: readonly string[];
+  target?: string;
+  reason?: string;
 }>;
 
 export type ApplicationAuditEvent = Readonly<{
@@ -33,6 +35,8 @@ export type ApplicationAuditEvent = Readonly<{
   actorId: string;
   sessionId: string;
   action: string;
+  target?: string;
+  reason?: string;
   outcome: "committed" | "failed" | "replayed";
   requestHash: `sha256:${string}`;
   beforeHash: `sha256:${string}`;
@@ -144,8 +148,13 @@ export class InMemoryRuntimeUnitOfWork implements RuntimeUnitOfWork {
 
       const candidate = cloneRuntime(this.runtime);
       let value: T;
+      let validatedCandidate: ConnectedAgentRuntime;
       try {
         value = operation(candidate);
+        // A command is not commit-ready merely because it returned. Force a
+        // snapshot round trip so every Core lineage invariant is checked before
+        // persistence or publication.
+        validatedCandidate = cloneRuntime(candidate);
       } catch (error) {
         this.audit.push(
           this.auditEvent(
@@ -160,16 +169,16 @@ export class InMemoryRuntimeUnitOfWork implements RuntimeUnitOfWork {
         );
         throw error;
       }
-      const afterHash = runtimeHash(candidate);
+      const afterHash = runtimeHash(validatedCandidate);
       try {
-        await this.persist(identity, candidate, metadata);
+        await this.persist(identity, validatedCandidate, metadata);
       } catch {
         this.audit.push(
           this.auditEvent(identity, metadata, "failed", beforeHash, beforeHash, this.revision, "PERSISTENCE_FAILED")
         );
         throw new ApplicationError("PERSISTENCE_FAILED", true);
       }
-      this.runtime = candidate;
+      this.runtime = validatedCandidate;
       this.revision += 1;
       const receipt: MutationReceipt<T> = Object.freeze({
         value,
@@ -216,6 +225,8 @@ export class InMemoryRuntimeUnitOfWork implements RuntimeUnitOfWork {
       actorId: metadata.actorId,
       sessionId: metadata.sessionId,
       action: metadata.action,
+      ...(metadata.target === undefined ? {} : { target: metadata.target }),
+      ...(metadata.reason === undefined ? {} : { reason: metadata.reason }),
       outcome,
       requestHash: metadata.requestHash,
       beforeHash,
@@ -309,6 +320,7 @@ const executeQuery = (
     case "learning_trace": {
       const trace = runtime.learningTrace(query.input.eventId);
       assertEventIdentity(authority, trace);
+      if (trace.atom !== undefined && !visibleAtom(authority, trace.atom)) throw new Error("LEARNING_TRACE_NOT_FOUND");
       return trace;
     }
     case "atom_trace": {
@@ -366,6 +378,30 @@ const authorizeCommand = (authority: AuthenticatedContext, command: MerakiComman
   }
 };
 
+const commandAuditMetadata = (command: MerakiCommand): Readonly<{ target?: string; reason?: string }> => {
+  switch (command.name) {
+    case "record_correction":
+    case "record_activity":
+    case "record_outcome":
+      return { target: command.input.runId };
+    case "extract_candidate":
+      return { target: command.input.eventId };
+    case "run_agent":
+      return { target: command.input.context.task_id };
+    case "record_evaluation":
+      return { target: command.input.runId };
+    case "propose_update":
+      return { target: command.input.lessonId };
+    case "command_update_proposal":
+      return { target: command.input.proposalId };
+    case "command_atom":
+      return {
+        target: command.input.atomId,
+        ...(command.input.reason === undefined ? {} : { reason: command.input.reason })
+      };
+  }
+};
+
 const authorizeCommandResource = (
   runtime: ConnectedAgentRuntime,
   authority: AuthenticatedContext,
@@ -379,6 +415,7 @@ const authorizeCommandResource = (
     case "extract_candidate": {
       const trace = runtime.learningTrace(command.input.eventId);
       assertEventIdentity(authority, trace);
+      if (trace.atom !== undefined) requireAtomWriteAuthority(authority, trace.atom);
       return;
     }
     case "run_agent":
@@ -471,8 +508,13 @@ const executeCommand = (
     }
     case "command_atom": {
       requireScopes(authority, ["profile:write"]);
-      requireAtomWriteAuthority(authority, atomOwnedBy(runtime, authority, command.input.atomId));
       const input = command.input;
+      const atom = atomOwnedBy(runtime, authority, input.atomId);
+      requireAtomWriteAuthority(authority, atom);
+      if (input.reason !== undefined && (typeof input.reason !== "string" || !input.reason.trim()))
+        throw new ApplicationError("DECISION_REASON_INVALID");
+      if (input.requiredLifecycles !== undefined && !input.requiredLifecycles.includes(atom.lifecycle))
+        throw new ApplicationError("ATOM_LIFECYCLE_PRECONDITION_FAILED");
       if (input.operation === "split") return runtime.split(input.atomId, input.claims ?? [], input.expectedVersion);
       if (input.operation === "confirm") return runtime.approve(input.atomId, input.expectedVersion);
       if (input.operation === "edit") return runtime.edit(input.atomId, input.claim ?? "", input.expectedVersion);
@@ -525,7 +567,8 @@ export class MerakiApplicationService implements MerakiApplication {
         action: request.command.name,
         actorId: authority.actorId,
         sessionId: authority.sessionId,
-        scopes: [...authority.scopes].sort()
+        scopes: [...authority.scopes].sort(),
+        ...commandAuditMetadata(request.command)
       },
       (runtime) => authorizeCommandResource(runtime, authority, request.command),
       (runtime) => executeCommand(runtime, authority, request.command)

@@ -24,6 +24,13 @@ const taskContext = {
   permissions: [],
   token_budget: 100
 };
+const recordExtractAndApprove = (runtime: ConnectedAgentRuntime) => {
+  const evidence = runtime.correction(correction);
+  const candidate = runtime.extractCorrectionLesson(evidence.eventId);
+  expect(candidate.lifecycle).toBe("candidate");
+  expect(runtime.retrieve(taskContext).pack.items).toHaveLength(0);
+  return runtime.approve(candidate.id, candidate.version);
+};
 
 describe("runtime scope parsing", () => {
   it("matches the public conditional Scope contract", () => {
@@ -43,7 +50,7 @@ describe("runtime scope parsing", () => {
 
   it("validates evaluation inputs against the public contract at runtime", () => {
     const runtime = new ConnectedAgentRuntime();
-    runtime.learn(correction);
+    recordExtractAndApprove(runtime);
     const run = runtime.run({ context: taskContext, request: "Draft", baseline: "BASELINE" });
     const valid = {
       runId: run.trace.runId,
@@ -77,7 +84,7 @@ describe("runtime scope parsing", () => {
 
   it("restores valid connected lineage and rejects cross-subject run snapshots", () => {
     const runtime = new ConnectedAgentRuntime();
-    runtime.learn(correction);
+    recordExtractAndApprove(runtime);
     const run = runtime.run({ context: taskContext, request: "Draft", baseline: "BASELINE" });
     runtime.recordEvaluation({
       runId: run.trace.runId,

@@ -62,15 +62,15 @@ importers:
 
   apps/mcp:
     dependencies:
+      '@meraki/application':
+        specifier: workspace:*
+        version: link:../../packages/application
       '@meraki/auth':
         specifier: workspace:*
         version: link:../../packages/auth
-      '@meraki/contracts':
+      '@meraki/mcp-tools':
         specifier: workspace:*
-        version: link:../../packages/contracts
-      '@meraki/core':
-        specifier: workspace:*
-        version: link:../../packages/core
+        version: link:../../packages/mcp-tools
       '@meraki/storage-local':
         specifier: workspace:*
         version: link:../../packages/storage-local
@@ -112,6 +112,24 @@ importers:
       canonicalize:
         specifier: 3.0.0
         version: 3.0.0
+
+  packages/mcp-tools:
+    dependencies:
+      '@meraki/application':
+        specifier: workspace:*
+        version: link:../application
+      '@meraki/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@meraki/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@meraki/core':
+        specifier: workspace:*
+        version: link:../core
+      ajv:
+        specifier: 8.20.0
+        version: 8.20.0
 
   packages/storage-local:
     dependencies:
