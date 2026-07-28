@@ -6,6 +6,14 @@ export interface AuthenticatedContext {
   readonly actorId: string;
   readonly sessionId: string;
   readonly scopes: ReadonlySet<string>;
+  /**
+   * Stable identifier for the credential that established this authority.
+   *
+   * Opaque hosted access tokens populate this with the database token row ID so
+   * mutations can re-check revocation and expiry inside their SQL transaction.
+   * Local signed JWTs intentionally omit it.
+   */
+  readonly credentialId?: string;
 }
 
 export interface RequestAuthenticator {
@@ -141,7 +149,8 @@ export function toDatabaseSessionContext(context: AuthenticatedContext) {
     subjectId: context.subjectId,
     actorId: context.actorId,
     sessionId: context.sessionId,
-    scopes: [...context.scopes]
+    scopes: [...context.scopes],
+    ...(context.credentialId === undefined ? {} : { credentialId: context.credentialId })
   } as const;
 }
 

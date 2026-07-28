@@ -24,6 +24,8 @@ export type RuntimeTransactionMetadata = Readonly<{
   actorId: string;
   sessionId: string;
   scopes: readonly string[];
+  tokenId?: string;
+  expectedRevision?: number;
   target?: string;
   reason?: string;
 }>;
@@ -144,6 +146,12 @@ export class InMemoryRuntimeUnitOfWork implements RuntimeUnitOfWork {
         const replayed = { ...cloneReceipt(prior.receipt), replayed: true } as MutationReceipt<T>;
         this.audit.push(this.auditEvent(identity, metadata, "replayed", beforeHash, beforeHash, this.revision));
         return replayed;
+      }
+      if (metadata.expectedRevision !== undefined && metadata.expectedRevision !== this.revision) {
+        this.audit.push(
+          this.auditEvent(identity, metadata, "failed", beforeHash, beforeHash, this.revision, "REVISION_CONFLICT")
+        );
+        throw new ApplicationError("REVISION_CONFLICT", true);
       }
 
       const candidate = cloneRuntime(this.runtime);
@@ -548,6 +556,11 @@ export class MerakiApplicationService implements MerakiApplication {
   ): Promise<MutationReceipt<CommandResult<C>>> {
     if (!request.requestId.trim()) throw new Error("REQUEST_ID_REQUIRED");
     if (!request.idempotencyKey.trim()) throw new Error("IDEMPOTENCY_KEY_REQUIRED");
+    if (
+      request.expectedRevision !== undefined &&
+      (!Number.isSafeInteger(request.expectedRevision) || request.expectedRevision < 0)
+    )
+      throw new ApplicationError("EXPECTED_REVISION_INVALID");
     authorizeCommand(authority, request.command);
     const requestHash = sha256Digest(
       canonicalJson({
@@ -555,6 +568,7 @@ export class MerakiApplicationService implements MerakiApplication {
         subject_id: authority.subjectId,
         actor_id: authority.actorId,
         scopes: [...authority.scopes].sort(),
+        ...(request.expectedRevision === undefined ? {} : { expected_revision: request.expectedRevision }),
         command: request.command
       })
     );
@@ -568,6 +582,8 @@ export class MerakiApplicationService implements MerakiApplication {
         actorId: authority.actorId,
         sessionId: authority.sessionId,
         scopes: [...authority.scopes].sort(),
+        ...(authority.credentialId === undefined ? {} : { tokenId: authority.credentialId }),
+        ...(request.expectedRevision === undefined ? {} : { expectedRevision: request.expectedRevision }),
         ...commandAuditMetadata(request.command)
       },
       (runtime) => authorizeCommandResource(runtime, authority, request.command),

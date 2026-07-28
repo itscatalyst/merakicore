@@ -10,6 +10,7 @@
     { "path": "./packages/application" },
     { "path": "./packages/mcp-tools" },
     { "path": "./packages/storage-local" },
+    { "path": "./packages/storage-postgres" },
     { "path": "./examples/quickstart" }
   ]
 }

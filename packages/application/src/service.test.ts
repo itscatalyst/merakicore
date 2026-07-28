@@ -15,6 +15,7 @@ type ActivityRequestOptions = Readonly<{
   content?: string;
   requestId?: string;
   idempotencyKey?: string;
+  expectedRevision?: number;
 }>;
 
 const projectScope = { level: "project" as const, ref: "acme" };
@@ -41,6 +42,7 @@ const activityRequest = (
 ): MutationEnvelope<RecordActivityCommand> => ({
   requestId: options.requestId ?? `request-${index}`,
   idempotencyKey: options.idempotencyKey ?? `activity-${index}`,
+  ...(options.expectedRevision === undefined ? {} : { expectedRevision: options.expectedRevision }),
   command: {
     name: "record_activity",
     input: {
@@ -227,6 +229,58 @@ describe("Meraki application command boundary", () => {
     expect((await unitOfWork.currentRuntime()).snapshot().engine.evidenceLedger.events).toHaveLength(1);
     expect(persist).toHaveBeenCalledTimes(1);
     expect(unitOfWork.auditEvents().map((event) => event.outcome)).toEqual(["committed", "replayed"]);
+  });
+
+  it("rejects stale expected revisions without changing state while preserving exact idempotent replay", async () => {
+    const { application, unitOfWork } = createInMemoryApplication();
+    const original = activityRequest(1, {
+      idempotencyKey: "revision-bound",
+      requestId: "revision-first",
+      expectedRevision: 0
+    });
+    const first = await application.mutate(authority(), original);
+
+    await expect(
+      application.mutate(
+        authority(),
+        activityRequest(2, {
+          idempotencyKey: "stale-new-command",
+          expectedRevision: 0
+        })
+      )
+    ).rejects.toMatchObject({ code: "REVISION_CONFLICT", retryable: true });
+    const replay = await application.mutate(authority(), {
+      ...original,
+      requestId: "revision-replay"
+    });
+
+    expect(first).toMatchObject({ replayed: false, revision: 1 });
+    expect(replay).toMatchObject({ replayed: true, revision: 1 });
+    expect((await unitOfWork.currentRuntime()).snapshot().engine.evidenceLedger.events).toHaveLength(1);
+    expect(unitOfWork.auditEvents().map(({ outcome, errorCode }) => ({ outcome, errorCode }))).toEqual([
+      { outcome: "committed", errorCode: undefined },
+      { outcome: "failed", errorCode: "REVISION_CONFLICT" },
+      { outcome: "replayed", errorCode: undefined }
+    ]);
+  });
+
+  it("rejects malformed expected revisions before persistence", async () => {
+    const persist = vi.fn(() => Promise.resolve());
+    const { application } = createInMemoryApplication(new ConnectedAgentRuntime(), persist);
+
+    await expect(
+      application.mutate(authority(), {
+        ...activityRequest(1),
+        expectedRevision: -1
+      })
+    ).rejects.toMatchObject({ code: "EXPECTED_REVISION_INVALID" });
+    await expect(
+      application.mutate(authority(), {
+        ...activityRequest(2),
+        expectedRevision: 1.5
+      })
+    ).rejects.toMatchObject({ code: "EXPECTED_REVISION_INVALID" });
+    expect(persist).not.toHaveBeenCalled();
   });
 
   it("authorizes every replay before consulting idempotency state", async () => {
