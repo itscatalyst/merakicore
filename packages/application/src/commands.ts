@@ -82,5 +82,6 @@ export type CommandResult<C extends MerakiCommand> =
 export type MutationEnvelope<C extends MerakiCommand = MerakiCommand> = Readonly<{
   requestId: string;
   idempotencyKey: string;
+  expectedRevision?: number;
   command: C;
 }>;
