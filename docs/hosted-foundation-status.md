@@ -176,6 +176,7 @@ The schema must not be exposed through Supabase Data API / `anon` /
 - Live Postgres integration test skips without `MERAKI_TEST_*` env vars.
 - Supabase management API required chunked application of migrations during
   Gate 3 proof; repository files remain the atomic scripts for CLI/release.
+- Failed mutation attempts are not yet durably recorded in Postgres. The hosted transport must add a separate failure-audit or security-event path before production use; committed mutations and idempotent replays are currently the durable audit events.
 
 ## 7. Explicitly deferred work
 
