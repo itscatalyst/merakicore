@@ -64,6 +64,12 @@ describe("guidance compiler", () => {
       compileGuidance([atom("unrelated", { claim: "For recipes, use seasonal ingredients." })], context).pack.items
     ).toEqual([]);
     expect(compileGuidance([atom("secret", { sensitivity: "sensitive" })], context).pack.items).toEqual([]);
+    const prohibited = compileGuidance([atom("prohibited", { sensitivity: "prohibited_inference" })], {
+      ...context,
+      permissions: ["read:sensitive"]
+    });
+    expect(prohibited.pack.items).toEqual([]);
+    expect(prohibited.candidates[0]?.reasons).toContain("prohibited_inference");
     expect(compileGuidance([atom("budget")], { ...context, token_budget: 1 }).pack.items).toEqual([]);
   });
 });

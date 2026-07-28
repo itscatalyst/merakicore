@@ -391,7 +391,18 @@ export class LearningEngine {
   }
 
   retrieve(context: TaskContext): { candidates: RetrievalCandidate[]; pack: MerakiPack } {
-    return compileGuidance(this.profile.all(), context);
+    return compileGuidance(
+      this.profile
+        .all()
+        .filter(
+          (atom) =>
+            atom.tenant_id === context.tenant_id &&
+            atom.subject_id === context.subject_id &&
+            atom.sensitivity !== "prohibited_inference" &&
+            (atom.sensitivity !== "sensitive" || context.permissions.includes("read:sensitive"))
+        ),
+      context
+    );
   }
 
   learn(input: CorrectionInput): LearningReceipt {

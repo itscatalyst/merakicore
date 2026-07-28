@@ -106,7 +106,7 @@ const deepFreeze = <T>(value: T): T => {
   }
   return value;
 };
-const normalizeTaskContext = (context: TaskContext): TaskContext => {
+export const normalizeTaskContext = (context: TaskContext): TaskContext => {
   if (!context || typeof context !== "object" || context.contract !== "task_context")
     throw new Error("TASK_CONTEXT_INVALID");
   if (typeof context.tenant_id !== "string" || !context.tenant_id.trim()) throw new Error("TENANT_ID_REQUIRED");

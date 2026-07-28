@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { JwtRequestAuthenticator, signTestJwt } from "@meraki/auth";
+import { createInMemoryApplication } from "@meraki/application";
 import { buildPersistentServer, buildServer } from "./index.js";
 import { ConnectedAgentRuntime, evaluateConnectedCausalComparison } from "@meraki/core";
 import { JsonConnectedRuntimeStore } from "@meraki/storage-local";
@@ -1039,5 +1040,56 @@ describe("connected agent adapter", () => {
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+
+  it("replays matching HTTP idempotency keys once and rejects conflicting reuse", async () => {
+    const { application, unitOfWork } = createInMemoryApplication();
+    const isolated = buildServer(application, testAuthority);
+    await isolated.ready();
+    const headers = { "idempotency-key": "correction-once" };
+    const first = await isolated.inject({
+      method: "POST",
+      url: "/v1/corrections",
+      headers,
+      payload: correction
+    });
+    const replay = await isolated.inject({
+      method: "POST",
+      url: "/v1/corrections",
+      headers,
+      payload: correction
+    });
+    const conflict = await isolated.inject({
+      method: "POST",
+      url: "/v1/corrections",
+      headers,
+      payload: { ...correction, correction: "Use a different subject" }
+    });
+
+    expect(first.statusCode).toBe(201);
+    expect(replay.statusCode).toBe(201);
+    expect(replay.json()).toEqual(first.json());
+    expect(conflict.statusCode).toBe(409);
+    expect(conflict.json<{ error: string }>().error).toBe("IDEMPOTENCY_CONFLICT");
+    expect((await unitOfWork.currentRuntime()).snapshot().engine.evidenceLedger.events).toHaveLength(1);
+    await isolated.close();
+  });
+
+  it("returns a retryable server error without publishing state when persistence fails", async () => {
+    const { application, unitOfWork } = createInMemoryApplication(new ConnectedAgentRuntime(), () =>
+      Promise.reject(new Error("disk unavailable"))
+    );
+    const isolated = buildServer(application, testAuthority);
+    await isolated.ready();
+    const response = await isolated.inject({
+      method: "POST",
+      url: "/v1/corrections",
+      payload: correction
+    });
+
+    expect(response.statusCode).toBe(500);
+    expect(response.json<{ error: string }>().error).toBe("PERSISTENCE_FAILED");
+    expect((await unitOfWork.currentRuntime()).snapshot().engine.evidenceLedger.events).toEqual([]);
+    await isolated.close();
   });
 });
