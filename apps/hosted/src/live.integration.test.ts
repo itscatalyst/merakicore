@@ -9,8 +9,13 @@ type LiveHostedConfig = Readonly<{
   databaseUrl: string;
   tokenPepper: string;
   token: string;
+  readOnlyToken: string;
+  expiredToken: string;
+  revokedToken: string;
+  otherSubjectToken: string;
   tenantId: string;
   subjectId: string;
+  otherSubjectId: string;
   actorId: string;
 }>;
 
@@ -19,8 +24,13 @@ const liveConfig = (): LiveHostedConfig | undefined => {
     databaseUrl: process.env.MERAKI_TEST_HOSTED_DATABASE_URL,
     tokenPepper: process.env.MERAKI_TEST_HOSTED_TOKEN_PEPPER,
     token: process.env.MERAKI_TEST_HOSTED_TOKEN,
+    readOnlyToken: process.env.MERAKI_TEST_HOSTED_READ_ONLY_TOKEN,
+    expiredToken: process.env.MERAKI_TEST_HOSTED_EXPIRED_TOKEN,
+    revokedToken: process.env.MERAKI_TEST_HOSTED_REVOKED_TOKEN,
+    otherSubjectToken: process.env.MERAKI_TEST_HOSTED_OTHER_SUBJECT_TOKEN,
     tenantId: process.env.MERAKI_TEST_HOSTED_TENANT_ID,
     subjectId: process.env.MERAKI_TEST_HOSTED_SUBJECT_ID,
+    otherSubjectId: process.env.MERAKI_TEST_HOSTED_OTHER_SUBJECT_ID,
     actorId: process.env.MERAKI_TEST_HOSTED_ACTOR_ID
   };
   return Object.values(values).every((value) => typeof value === "string" && value.length > 0)
@@ -55,7 +65,7 @@ if (config === undefined) {
     method: "GET" | "POST",
     path: readonly string[],
     input: Readonly<{
-      auth?: "valid" | "missing" | "wrong";
+      auth?: "valid" | "read-only" | "expired" | "revoked" | "other-subject" | "missing" | "wrong";
       body?: unknown;
       idempotencyKey?: string;
       query?: string;
@@ -64,6 +74,10 @@ if (config === undefined) {
     const headers = new Headers({ origin });
     const auth = input.auth ?? "valid";
     if (auth === "valid") headers.set("authorization", `Bearer ${config.token}`);
+    if (auth === "read-only") headers.set("authorization", `Bearer ${config.readOnlyToken}`);
+    if (auth === "expired") headers.set("authorization", `Bearer ${config.expiredToken}`);
+    if (auth === "revoked") headers.set("authorization", `Bearer ${config.revokedToken}`);
+    if (auth === "other-subject") headers.set("authorization", `Bearer ${config.otherSubjectToken}`);
     if (auth === "wrong") headers.set("authorization", `Bearer wrong-${randomUUID()}`);
     if (input.body !== undefined) headers.set("content-type", "application/json");
     if (input.idempotencyKey !== undefined) headers.set("idempotency-key", input.idempotencyKey);
@@ -115,6 +129,18 @@ if (config === undefined) {
         error: { code: "AUTHENTICATION_REQUIRED" }
       });
 
+      for (const auth of ["expired", "revoked"] as const) {
+        const denied = await call("GET", ["profile", "atoms"], { auth });
+        expect(denied.status, auth).toBe(401);
+        expect(await json<{ error: { code: string } }>(denied)).toMatchObject({
+          error: { code: "AUTHENTICATION_REQUIRED" }
+        });
+      }
+
+      const foreign = await call("GET", ["profile", "atoms"], { auth: "other-subject" });
+      expect(foreign.status).toBe(200);
+      expect((await json<{ items: Array<{ id: string }> }>(foreign)).items).toEqual([]);
+
       const correction = await call("POST", ["corrections"], {
         idempotencyKey: `${namespace}:correction`,
         body: {
@@ -134,6 +160,23 @@ if (config === undefined) {
       expect(correction.headers.get("access-control-allow-origin")).toBe(origin);
       expect(correction.headers.get("x-request-id")).toMatch(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u);
       const evidenceId = (await json<{ evidence: { eventId: string } }>(correction)).evidence.eventId;
+
+      const readOnlyMutation = await call("POST", ["activity"], {
+        auth: "read-only",
+        idempotencyKey: `${namespace}:read-only-mutation`,
+        body: {
+          tenantId: config.tenantId,
+          subjectId: config.subjectId,
+          actorId: config.actorId,
+          runId: `${namespace}:read-only`,
+          taskType,
+          activityType: "edit",
+          content: "This write must be denied.",
+          scope,
+          mode
+        }
+      });
+      expect(readOnlyMutation.status).toBe(403);
 
       const candidateResponse = await call("POST", ["learning", "candidates"], {
         idempotencyKey: `${namespace}:candidate`,
