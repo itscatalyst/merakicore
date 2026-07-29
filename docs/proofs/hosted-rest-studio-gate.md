@@ -34,6 +34,13 @@ latency measurements. No `MERAKI_TEST_*` credentials were present in this
 workspace during the current run, so the live proof is explicitly blocked and
 has not been substituted with unit tests.
 
+The expanded live harness requires these additional redacted fixture names:
+`MERAKI_TEST_HOSTED_READ_ONLY_TOKEN`,
+`MERAKI_TEST_HOSTED_EXPIRED_TOKEN`,
+`MERAKI_TEST_HOSTED_REVOKED_TOKEN`,
+`MERAKI_TEST_HOSTED_OTHER_SUBJECT_TOKEN`, and
+`MERAKI_TEST_HOSTED_OTHER_SUBJECT_ID`.
+
 ## Required proof matrix
 
 - `/health`, `/studio`, and `/dashboard`: status, no-store, CSP nonce, exact
@@ -61,6 +68,13 @@ has not been substituted with unit tests.
 | Two-process durability | blocked: no temporary Supabase credentials supplied | No live credential names found in `MERAKI_TEST_*` environment |
 | Secret scan and dependency audit | passed | `corepack pnpm security:secrets`; `corepack pnpm audit --prod` |
 | Independent review | pending | Read-only review requested before merge decision |
+
+The configured Supabase project `fekueomuolskqtnbzxfl` was independently
+checked on 2026-07-29: status `ACTIVE_HEALTHY`, Postgres 17.6, the
+`meraki_private` runtime tables and Gate 3 migrations are present, and the
+management advisor returned no high-severity finding. This is infrastructure
+health evidence only; it is not a substitute for running the hosted process
+with temporary credentials through the transaction pooler.
 
 ## Limitations
 
