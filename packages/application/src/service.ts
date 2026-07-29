@@ -1,11 +1,24 @@
 import type { AuthenticatedContext } from "@meraki/auth";
 import { requireScopes } from "@meraki/auth";
 import type { ProfileAtom } from "@meraki/contracts";
-import { ConnectedAgentRuntime, canonicalJson, scopeFromUnknown, sha256Digest } from "@meraki/core";
+import {
+  ConnectedAgentRuntime,
+  canonicalJson,
+  evaluateConnectedCausalComparison,
+  scopeFromUnknown,
+  sha256Digest
+} from "@meraki/core";
 import type { CommandResult, MerakiCommand, MutationEnvelope } from "./commands.js";
 import { ApplicationError, applicationErrorCode, IdempotencyConflictError } from "./errors.js";
 import { assertAuthorityIdentity, authorizedTaskContext, canReadSensitive } from "./identity.js";
-import type { MerakiQuery, QueryResult } from "./queries.js";
+import type {
+  BoundedCollection,
+  MerakiQuery,
+  QueryResult,
+  RuntimeReadMetadata,
+  StudioEvidenceSummary,
+  StudioSnapshot
+} from "./queries.js";
 
 export type RuntimeIdentity = Readonly<{ tenantId: string; subjectId: string }>;
 
@@ -49,7 +62,10 @@ export type ApplicationAuditEvent = Readonly<{
 }>;
 
 export interface RuntimeUnitOfWork {
-  read<T>(identity: RuntimeIdentity, operation: (runtime: ConnectedAgentRuntime) => T): Promise<T>;
+  read<T>(
+    identity: RuntimeIdentity,
+    operation: (runtime: ConnectedAgentRuntime, metadata?: RuntimeReadMetadata) => T
+  ): Promise<T>;
   transact<T>(
     identity: RuntimeIdentity,
     metadata: RuntimeTransactionMetadata,
@@ -105,9 +121,15 @@ export class InMemoryRuntimeUnitOfWork implements RuntimeUnitOfWork {
     this.runtime = cloneRuntime(runtime);
   }
 
-  public async read<T>(_identity: RuntimeIdentity, operation: (runtime: ConnectedAgentRuntime) => T): Promise<T> {
+  public async read<T>(
+    _identity: RuntimeIdentity,
+    operation: (runtime: ConnectedAgentRuntime, metadata?: RuntimeReadMetadata) => T
+  ): Promise<T> {
     await this.pending;
-    return operation(cloneRuntime(this.runtime));
+    return operation(cloneRuntime(this.runtime), {
+      revision: this.revision,
+      snapshotHash: runtimeHash(this.runtime)
+    });
   }
 
   public transact<T>(
@@ -312,10 +334,89 @@ const proposalOwnedBy = (
   return proposal;
 };
 
+const queryLimit = (value: number | undefined): number | undefined => {
+  if (value === undefined) return undefined;
+  if (!Number.isSafeInteger(value) || value < 1 || value > 1000) throw new ApplicationError("LIST_LIMIT_INVALID");
+  return value;
+};
+
+const bounded = <T>(items: readonly T[], limit: number): BoundedCollection<T> => ({
+  items: items.slice(0, limit),
+  total: items.length,
+  truncated: items.length > limit
+});
+
+const studioSnapshot = (
+  runtime: ConnectedAgentRuntime,
+  authority: AuthenticatedContext,
+  input: { limit?: number },
+  metadata?: RuntimeReadMetadata
+): StudioSnapshot => {
+  const limit = queryLimit(input.limit) ?? 100;
+  const atoms = runtime.profileAtoms().filter((atom) => visibleAtom(authority, atom));
+  const visibleRuns = runtime.recentRuns().filter((record) => runVisible(runtime, authority, record));
+  const visibleEvaluations = runtime.evaluations().filter((record) => {
+    const run = runtime.getRun(record.runId);
+    return run !== undefined && runVisible(runtime, authority, run);
+  });
+  const visibleProposals = runtime.updateProposals().filter((proposal) => {
+    if (proposal.tenant_id !== authority.tenantId || proposal.subject_id !== authority.subjectId) return false;
+    const atom = runtime.profileAtoms().find((candidate) => candidate.id === proposal.target.id);
+    return atom !== undefined && visibleAtom(authority, atom);
+  });
+  const snapshot = runtime.snapshot();
+  const sources = new Map(snapshot.engine.evidenceLedger.sources.map((source) => [source.id, source]));
+  const evidence = snapshot.engine.evidenceLedger.events
+    .filter((event) => event.tenant_id === authority.tenantId && event.subject_id === authority.subjectId)
+    .map((event): StudioEvidenceSummary | undefined => {
+      const source = sources.get(event.source_id);
+      if (source === undefined) return undefined;
+      return {
+        eventId: event.id,
+        sourceId: event.source_id,
+        eventType: event.event_type,
+        occurredAt: event.occurred_at,
+        recordedAt: event.recorded_at,
+        sourceType: source.source_type,
+        trustClass: source.trust_class,
+        // Evidence spans are potentially quote-bearing and therefore remain
+        // hidden from ordinary profile readers unless sensitive-read authority
+        // is explicitly present. The summary metadata is still inspectable.
+        evidenceSpans: canReadSensitive(authority) ? event.evidence_spans : []
+      };
+    })
+    .filter((event): event is StudioEvidenceSummary => event !== undefined)
+    .reverse();
+  const hash = metadata?.snapshotHash ?? runtimeHash(runtime);
+  return {
+    revision: metadata?.revision ?? 0,
+    snapshotHash: hash,
+    atoms: {
+      candidate: bounded(
+        atoms.filter((atom) => atom.lifecycle === "candidate"),
+        limit
+      ),
+      active: bounded(
+        atoms.filter((atom) => ["active", "stable", "locked_core"].includes(atom.lifecycle)),
+        limit
+      ),
+      other: bounded(
+        atoms.filter((atom) => !["candidate", "active", "stable", "locked_core"].includes(atom.lifecycle)),
+        limit
+      )
+    },
+    evidence: bounded(evidence, limit),
+    runs: bounded(visibleRuns, limit),
+    evaluations: bounded(visibleEvaluations, limit),
+    updateProposals: bounded(visibleProposals, limit)
+  };
+};
+
 const executeQuery = (
   runtime: ConnectedAgentRuntime,
   authority: AuthenticatedContext,
-  query: MerakiQuery
+  query: MerakiQuery,
+  metadata?: RuntimeReadMetadata
 ): QueryResult<MerakiQuery> => {
   requireScopes(authority, ["profile:read"]);
   switch (query.name) {
@@ -323,8 +424,11 @@ const executeQuery = (
       const context = authorizedTaskContext(authority, query.input);
       return runtime.retrieve(context);
     }
-    case "list_atoms":
-      return runtime.profileAtoms().filter((atom) => visibleAtom(authority, atom));
+    case "list_atoms": {
+      const visible = runtime.profileAtoms().filter((atom) => visibleAtom(authority, atom));
+      const limit = queryLimit(query.input?.limit);
+      return limit === undefined ? visible : visible.slice(0, limit);
+    }
     case "learning_trace": {
       const trace = runtime.learningTrace(query.input.eventId);
       assertEventIdentity(authority, trace);
@@ -338,15 +442,31 @@ const executeQuery = (
       assertEventIdentity(authority, trace);
       return trace;
     }
-    case "list_update_proposals":
-      return runtime.updateProposals().filter((proposal) => {
+    case "list_update_proposals": {
+      const visible = runtime.updateProposals().filter((proposal) => {
         if (proposal.tenant_id !== authority.tenantId || proposal.subject_id !== authority.subjectId) return false;
         const atom = runtime.profileAtoms().find((candidate) => candidate.id === proposal.target.id);
         return atom !== undefined && visibleAtom(authority, atom);
       });
+      const limit = queryLimit(query.input?.limit);
+      return limit === undefined ? visible : visible.slice(0, limit);
+    }
     case "list_runs": {
       const visible = runtime.recentRuns().filter((record) => runVisible(runtime, authority, record));
-      return query.input.limit === undefined ? visible : visible.slice(0, query.input.limit);
+      const limit = queryLimit(query.input.limit);
+      return limit === undefined ? visible : visible.slice(0, limit);
+    }
+    case "list_run_page": {
+      const visible = runtime.recentRuns().filter((record) => runVisible(runtime, authority, record));
+      const limit = queryLimit(query.input.limit);
+      return {
+        items: limit === undefined ? visible : visible.slice(0, limit),
+        total: visible.length,
+        summary: {
+          guidanceApplied: visible.filter((record) => record.run.trace.changed).length,
+          baselinePreserved: visible.filter((record) => !record.run.trace.changed).length
+        }
+      };
     }
     case "get_run": {
       const run = runtime.getRun(query.input.runId);
@@ -354,11 +474,33 @@ const executeQuery = (
       if (!runVisible(runtime, authority, run)) return undefined;
       return run;
     }
-    case "list_evaluations":
-      return runtime.evaluations().filter((record) => {
+    case "list_evaluations": {
+      const visible = runtime.evaluations().filter((record) => {
         const run = runtime.getRun(record.runId);
         return run !== undefined && runVisible(runtime, authority, run);
       });
+      const limit = queryLimit(query.input?.limit);
+      return limit === undefined ? visible : visible.slice(0, limit);
+    }
+    case "studio_snapshot":
+      return studioSnapshot(runtime, authority, query.input, metadata);
+    case "run_controlled_comparison": {
+      requireScopes(authority, ["evidence:write", "profile:write", "evaluation:write"]);
+      assertAuthorityIdentity(authority, query.input.correction);
+      const relatedContext = authorizedTaskContext(authority, query.input.related.context);
+      const unrelatedContext = authorizedTaskContext(authority, query.input.unrelated.context);
+      return evaluateConnectedCausalComparison({
+        ...(query.input.experimentId === undefined ? {} : { experimentId: query.input.experimentId }),
+        correction: {
+          ...query.input.correction,
+          tenantId: authority.tenantId,
+          subjectId: authority.subjectId,
+          actorId: authority.actorId
+        },
+        related: { ...query.input.related, context: relatedContext },
+        unrelated: { ...query.input.unrelated, context: unrelatedContext }
+      });
+    }
   }
 };
 
@@ -401,7 +543,10 @@ const commandAuditMetadata = (command: MerakiCommand): Readonly<{ target?: strin
     case "propose_update":
       return { target: command.input.lessonId };
     case "command_update_proposal":
-      return { target: command.input.proposalId };
+      return {
+        target: command.input.proposalId,
+        ...(command.input.reason === undefined ? {} : { reason: command.input.reason })
+      };
     case "command_atom":
       return {
         target: command.input.atomId,
@@ -544,8 +689,8 @@ export class MerakiApplicationService implements MerakiApplication {
   public constructor(private readonly unitOfWork: RuntimeUnitOfWork) {}
 
   public async query<Q extends MerakiQuery>(authority: AuthenticatedContext, query: Q): Promise<QueryResult<Q>> {
-    const result = await this.unitOfWork.read(subjectIdentity(authority), (runtime) =>
-      executeQuery(runtime, authority, query)
+    const result = await this.unitOfWork.read(subjectIdentity(authority), (runtime, metadata) =>
+      executeQuery(runtime, authority, query, metadata)
     );
     return result as QueryResult<Q>;
   }

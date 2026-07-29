@@ -1,6 +1,6 @@
 import type { TaskContext } from "@meraki/contracts";
 import { assertAuthenticatedIdentity, type AuthenticatedContext } from "@meraki/auth";
-import { normalizeTaskContext } from "@meraki/core";
+import { normalizeTaskContext, scopeFromUnknown } from "@meraki/core";
 
 const sensitivePermission = (authority: AuthenticatedContext): boolean =>
   authority.scopes.has("read:sensitive") ||
@@ -33,3 +33,9 @@ export const authorizedTaskContext = (authority: AuthenticatedContext, context: 
 };
 
 export const canReadSensitive = sensitivePermission;
+
+/**
+ * Keeps wire adapters from importing Core solely to validate a public scope.
+ * The application boundary remains the single bridge into Core domain parsing.
+ */
+export const parseScope = scopeFromUnknown;
