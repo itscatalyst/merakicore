@@ -163,6 +163,131 @@ describe("Meraki application command boundary", () => {
     expect(unitOfWork.auditEvents()).toEqual([]);
   });
 
+  it("returns a bounded, one-revision Studio snapshot with visible evidence and lifecycle groups", async () => {
+    const runtime = new ConnectedAgentRuntime();
+    seedApprovedAtom(runtime, {
+      suffix: "studio-snapshot",
+      claim: "For Studio, show the evidence before changing governed state."
+    });
+    runtime.run({
+      context: { ...taskContext(), task_id: "studio-snapshot-run" },
+      request: "Inspect the current Meraki state",
+      baseline: "No guidance"
+    });
+    const { application } = createInMemoryApplication(runtime);
+    const snapshot = await application.query(authority(), {
+      name: "studio_snapshot",
+      input: { limit: 1 }
+    });
+
+    expect(snapshot.revision).toBe(0);
+    expect(snapshot.snapshotHash).toMatch(/^sha256:[a-f0-9]{64}$/u);
+    expect(snapshot.atoms.active.total).toBe(1);
+    expect(snapshot.atoms.active.items).toHaveLength(1);
+    expect(snapshot.runs.total).toBe(1);
+    expect(snapshot.runs.items).toHaveLength(1);
+    expect(snapshot.evidence.total).toBeGreaterThan(0);
+    expect(snapshot.evidence.items).toHaveLength(1);
+    expect(snapshot.evidence.truncated).toBe(false);
+    expect(snapshot.evidence.items[0]?.evidenceSpans).toEqual([]);
+
+    const sensitiveSnapshot = await application.query(
+      authority({ scopes: ["profile:read", "profile:write", "evidence:write", "read:sensitive"] }),
+      { name: "studio_snapshot", input: { limit: 1 } }
+    );
+    expect(sensitiveSnapshot.evidence.items[0]?.evidenceSpans.length).toBeGreaterThan(0);
+  });
+
+  it("bounds list queries and computes run-page totals behind the application boundary", async () => {
+    const runtime = new ConnectedAgentRuntime();
+    for (const index of [1, 2, 3]) {
+      seedApprovedAtom(runtime, {
+        suffix: `bounded-${index}`,
+        claim: `For email variant ${index}, use concise subject lines.`
+      });
+      runtime.run({
+        context: { ...taskContext(), task_id: `bounded-task-${index}` },
+        request: `Draft email ${index}`,
+        baseline: `Baseline ${index}`
+      });
+    }
+    const { application } = createInMemoryApplication(runtime);
+
+    const atoms = await application.query(authority(), { name: "list_atoms", input: { limit: 2 } });
+    const page = await application.query(authority(), { name: "list_run_page", input: { limit: 2 } });
+
+    expect(atoms).toHaveLength(2);
+    expect(page.items).toHaveLength(2);
+    expect(page.total).toBe(3);
+    expect(page.summary.guidanceApplied + page.summary.baselinePreserved).toBe(3);
+    await expect(
+      application.query(authority(), { name: "list_evaluations", input: { limit: 0 } })
+    ).rejects.toMatchObject({ code: "LIST_LIMIT_INVALID" });
+    await expect(
+      application.query(authority(), { name: "list_update_proposals", input: { limit: 1001 } })
+    ).rejects.toMatchObject({ code: "LIST_LIMIT_INVALID" });
+  });
+
+  it("runs the controlled comparison as an authorized read without changing durable state", async () => {
+    const { application, unitOfWork } = createInMemoryApplication();
+    const comparison = {
+      correction: {
+        tenantId: "tenant-a",
+        subjectId: "user-a",
+        actorId: "user-a",
+        runId: "causal-correction",
+        taskType: "email",
+        scope: projectScope,
+        mode: "concise",
+        original: "Use a long subject line.",
+        correction: "Use a concise subject line."
+      },
+      related: {
+        context: { ...taskContext(), task_id: "causal-related" },
+        request: "Draft a project email.",
+        baseline: "A long project email subject"
+      },
+      unrelated: {
+        context: {
+          ...taskContext(),
+          task_id: "causal-unrelated",
+          task_type: "code",
+          scope: { level: "project" as const, ref: "unrelated" },
+          mode: "implementation"
+        },
+        request: "Review this function.",
+        baseline: "Baseline code review"
+      },
+      experimentId: "causal-application-boundary"
+    };
+    const fullAuthority = authority({
+      scopes: ["profile:read", "profile:write", "evidence:write", "evaluation:write"]
+    });
+    const before = (await unitOfWork.currentRuntime()).snapshot();
+
+    const report = await application.query(fullAuthority, {
+      name: "run_controlled_comparison",
+      input: comparison
+    });
+
+    expect(report.experimentId).toBe("causal-application-boundary");
+    expect(report.arms.merakiPack.related.trace.changed).toBe(true);
+    expect((await unitOfWork.currentRuntime()).snapshot()).toEqual(before);
+    expect(unitOfWork.auditEvents()).toEqual([]);
+    await expect(
+      application.query(authority(), { name: "run_controlled_comparison", input: comparison })
+    ).rejects.toMatchObject({ code: "insufficient_scope" });
+    await expect(
+      application.query(fullAuthority, {
+        name: "run_controlled_comparison",
+        input: {
+          ...comparison,
+          correction: { ...comparison.correction, subjectId: "user-b" }
+        }
+      })
+    ).rejects.toMatchObject({ code: "identity_mismatch" });
+  });
+
   it("rolls back the candidate runtime atomically when persistence fails", async () => {
     let failPersistence = true;
     const persist = vi.fn(() => (failPersistence ? Promise.reject(new Error("DISK_WRITE_FAILED")) : Promise.resolve()));

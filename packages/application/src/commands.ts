@@ -23,6 +23,7 @@ export type ProposeUpdateInput = Readonly<{
 export type UpdateProposalCommandInput = Readonly<{
   proposalId: string;
   operation: "approve" | "reject" | "rollback";
+  reason?: string;
 }>;
 
 export type AtomCommandInput = Readonly<{

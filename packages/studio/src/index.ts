@@ -1,5 +1,8 @@
-/** A dependency-free local dashboard served by the API process. */
-export const dashboardHtml = `<!doctype html>
+export type StudioRenderOptions = Readonly<{
+  nonce?: string;
+}>;
+
+const studioHtml = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -23,7 +26,7 @@ h2{font-size:17px;margin:0}
 h3{font-size:14px;margin:20px 0 8px;color:var(--muted)}
 p{margin:0}
 .eyebrow{color:var(--muted);margin-top:3px}
-.auth{display:grid;grid-template-columns:minmax(220px,320px) auto auto;gap:8px;align-items:end}
+.auth{display:grid;grid-template-columns:minmax(220px,320px) auto auto auto;gap:8px;align-items:end}
 .field{display:grid;gap:5px}
 .field label{font-weight:700}
 .field small{color:var(--muted)}
@@ -44,7 +47,7 @@ input{width:100%;min-height:44px;background:#08101d;border:1px solid var(--line)
 .section-meta,.muted,th{color:var(--muted)}
 .bar-row{display:grid;grid-template-columns:minmax(90px,1fr) minmax(110px,2fr) minmax(90px,auto);gap:10px;align-items:center;margin:10px 0}
 .track{height:10px;background:#263752;border-radius:10px;overflow:hidden}
-.fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--purple));border-radius:10px}
+progress{width:100%;height:10px;display:block;accent-color:var(--accent)}
 .bar-value{text-align:right;font-variant-numeric:tabular-nums}
 .scroll{max-width:100%;overflow:auto;border-radius:8px}
 table{border-collapse:collapse;width:100%;min-width:760px}
@@ -90,7 +93,7 @@ summary{cursor:pointer;color:var(--accent);font-weight:650}
   <header>
     <div>
       <h1>Meraki <span>Studio</span></h1>
-      <p class="eyebrow">Inspect what the local learning engine recorded, learned, and applied.</p>
+      <p class="eyebrow">Inspect what the hosted learning runtime recorded, proposed, and applied.</p>
     </div>
     <div class="auth" aria-label="Dashboard connection">
       <div class="field">
@@ -100,9 +103,10 @@ summary{cursor:pointer;color:var(--accent);font-weight:650}
       </div>
       <button id="connect" type="button">Connect</button>
       <button id="refresh" type="button" class="secondary" disabled>Refresh</button>
+      <button id="forget" type="button" class="secondary">Forget token</button>
     </div>
   </header>
-  <p id="message" class="status" role="status" aria-live="polite" aria-atomic="true">Enter a local API token to inspect its tenant and subject.</p>
+  <p id="message" class="status" role="status" aria-live="polite" aria-atomic="true">Enter a hosted bearer token to inspect its tenant and subject.</p>
   <section id="dashboard" aria-label="Meraki activity snapshot" aria-busy="false">
     <dl class="grid" id="metrics">
       <div class="card"><dt>Runs recorded</dt><dd>—</dd><small>Connect to load</small></div>
@@ -125,6 +129,14 @@ summary{cursor:pointer;color:var(--accent);font-weight:650}
         <div class="scroll" id="atoms" tabindex="0" aria-label="Profile atoms table"><div class="empty">Connect to inspect learned claims and their scope.</div></div>
         <div id="trace" class="lineage empty" aria-live="polite">Select “View lineage” on an atom to inspect its evidence-to-guidance chain.</div>
       </article>
+      <article class="panel wide" aria-labelledby="evidence-heading">
+        <div class="panel-heading"><h2 id="evidence-heading">Evidence and provenance</h2><span class="section-meta" id="evidence-meta">Not loaded</span></div>
+        <div class="scroll" id="evidence" tabindex="0" aria-label="Evidence and provenance table"><div class="empty">Connect to inspect bounded evidence metadata.</div></div>
+      </article>
+      <article class="panel wide" aria-labelledby="proposal-heading">
+        <div class="panel-heading"><h2 id="proposal-heading">Update proposals</h2><span class="section-meta" id="proposal-meta">Not loaded</span></div>
+        <div class="scroll" id="proposals" tabindex="0" aria-label="Update proposals table"><div class="empty">Connect to inspect governed update proposals.</div></div>
+      </article>
       <article class="panel wide" aria-labelledby="run-heading">
         <div class="panel-heading"><h2 id="run-heading">Recent runs</h2><span class="section-meta" id="run-meta">Not loaded</span></div>
         <div class="scroll" id="runs" tabindex="0" aria-label="Recent runs table"><div class="empty">Connect to inspect how guidance affected agent output.</div></div>
@@ -137,8 +149,8 @@ const q=(selector)=>document.querySelector(selector);
 const esc=(value)=>String(value??'—').replace(/[&<>"']/g,(character)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character]));
 const RUN_LIMIT=20;
 const ATOM_LIMIT=100;
-const endpoints=['profile/atoms','runs?limit='+RUN_LIMIT,'update-proposals','evaluations'];
-let model={atoms:[],runs:[],runTotal:0,runSummary:{},proposals:[],evaluations:[]};
+const SNAPSHOT_LIMIT=100;
+let model={snapshot:null,atoms:[],runs:[],runTotal:0,runSummary:{},proposals:[],evaluations:[],evidence:[]};
 let connected=false;
 
 async function api(path,options={}){
@@ -148,7 +160,15 @@ async function api(path,options={}){
     headers:{'content-type':'application/json',authorization:'Bearer '+token,...options.headers}
   });
   const body=await response.json().catch(()=>({}));
-  if(!response.ok)throw new Error(body.error||('HTTP '+response.status));
+  if(!response.ok){
+    const detail=body&&typeof body.error==='object'?body.error:{};
+    const message=detail.message||body.error||('HTTP '+response.status);
+    const error=new Error(String(message));
+    error.code=detail.code||'HTTP_ERROR';
+    error.requestId=detail.requestId||response.headers.get('x-request-id')||'';
+    error.status=response.status;
+    throw error;
+  }
   return body;
 }
 
@@ -186,7 +206,7 @@ function bars(entries,total,label){
   if(!entries.length)return '<div class="empty">No '+esc(label.toLowerCase())+' recorded yet.</div>';
   return '<div role="list" aria-label="'+esc(label)+'; bars show share of total">'+entries.map(([name,count])=>{
     const share=percentage(count,total);
-    return '<div class="bar-row" role="listitem"><span>'+esc(name)+'</span><div class="track" aria-hidden="true"><div class="fill" style="width:'+share+'%"></div></div><strong class="bar-value">'+count+' · '+share+'%</strong></div>';
+    return '<div class="bar-row" role="listitem"><span>'+esc(name)+'</span><div class="track"><progress max="100" value="'+share+'" aria-label="'+esc(name)+' '+share+' percent"></progress></div><strong class="bar-value">'+count+' · '+share+'%</strong></div>';
   }).join('')+'</div>';
 }
 
@@ -228,12 +248,48 @@ function renderStates(atoms,proposals){
   q('#states').innerHTML=bars(lifecycleEntries,atoms.length,'Profile lifecycle distribution')+'<p class="section-meta">'+plural(pending,'pending update proposal')+'. Candidate approvals appear in the atom table below.</p>';
 }
 
+function renderEvidence(evidence){
+  q('#evidence-meta').textContent=plural(evidence.length,'evidence event');
+  if(!evidence.length){
+    q('#evidence').innerHTML='<div class="empty">No evidence metadata is available for this subject.</div>';
+    return;
+  }
+  q('#evidence').innerHTML='<table><caption class="sr-only">Bounded evidence metadata and provenance</caption><thead><tr><th>Recorded</th><th>Event</th><th>Source</th><th>Trust</th><th>Evidence spans</th></tr></thead><tbody>'+evidence.map((item)=>'<tr><td><time datetime="'+esc(item.recordedAt)+'">'+esc(formatTime(item.recordedAt))+'</time></td><td>'+esc(item.eventType)+'<div class="mono">'+esc(shortId(item.eventId))+'</div></td><td>'+esc(item.sourceType)+'<div class="mono">'+esc(shortId(item.sourceId))+'</div></td><td><span class="pill">'+esc(item.trustClass)+'</span></td><td>'+plural(Array.isArray(item.evidenceSpans)?item.evidenceSpans.length:0,'span')+'</td></tr>').join('')+'</tbody></table>';
+}
+
+function proposalDetails(proposal){
+  return '<details class="details"><summary>Inspect proposal</summary><dl class="detail-grid"><dt>Target</dt><dd class="mono">'+esc(shortId(proposal.target?.id))+' v'+esc(proposal.target?.version)+'</dd><dt>Evidence</dt><dd class="mono">'+esc((proposal.evidence||[]).map((item)=>shortId(item.event_id)).join(', ')||'None')+'</dd><dt>Expected impact</dt><dd>'+esc(proposal.expected_impact||'Not recorded')+'</dd><dt>Scope</dt><dd>'+esc(scopeLabel(proposal.proposed_scope))+'</dd></dl></details>';
+}
+
+function renderProposals(proposals){
+  q('#proposal-meta').textContent=plural(proposals.length,'proposal')+' · '+plural(proposals.filter((proposal)=>proposal.status==='pending').length,'pending');
+  if(!proposals.length){
+    q('#proposals').innerHTML='<div class="empty">No governed update proposals are recorded.</div>';
+    return;
+  }
+  q('#proposals').innerHTML='<table><caption class="sr-only">Governed update proposals and decisions</caption><thead><tr><th>Status</th><th>Operation</th><th>Target</th><th>Details</th><th>Decision</th></tr></thead><tbody>'+proposals.map((proposal)=>{
+    const action=proposal.status==='pending'
+      ? '<button type="button" data-proposal-action="approve" data-proposal-id="'+esc(proposal.id)+'">Approve</button><button type="button" class="secondary" data-proposal-action="reject" data-proposal-id="'+esc(proposal.id)+'">Reject</button>'
+      : proposal.status==='applied'
+        ? '<button type="button" class="secondary" data-proposal-action="rollback" data-proposal-id="'+esc(proposal.id)+'">Rollback</button>'
+        : '<span class="muted">No action</span>';
+    return '<tr><td><span class="pill '+(proposal.status==='pending'?'warning':proposal.status==='applied'?'good':'')+'">'+esc(proposal.status)+'</span></td><td>'+esc(proposal.operation)+'</td><td class="mono">'+esc(shortId(proposal.target?.id))+' v'+esc(proposal.target?.version)+'</td><td>'+proposalDetails(proposal)+'</td><td><div class="actions">'+action+'</div></td></tr>';
+  }).join('')+'</tbody></table>';
+}
+
 function atomRows(atoms){
   return atoms.map((atom)=>{
-    const approval=atom.lifecycle==='candidate'
-      ? '<button type="button" data-approve="'+esc(atom.id)+'" data-version="'+esc(atom.version)+'" data-claim="'+esc(atom.claim)+'" aria-label="Approve candidate: '+esc(atom.claim)+'">Approve candidate</button>'
+    const details={id:atom.id,version:atom.version,claim:atom.claim,lifecycle:atom.lifecycle,scope:scopeLabel(atom.scope),mode:atom.mode||'',evidence:(atom.evidence||[]).map((item)=>shortId(item.event_id)).join(', ')||'None'};
+    const decision=atom.lifecycle==='candidate'
+      ? '<button type="button" data-atom-action="confirm" data-id="'+esc(details.id)+'" data-version="'+esc(details.version)+'" data-claim="'+esc(details.claim)+'" data-lifecycle="'+esc(details.lifecycle)+'" data-scope="'+esc(details.scope)+'" data-mode="'+esc(details.mode)+'" data-evidence="'+esc(details.evidence)+'" aria-label="Approve candidate: '+esc(atom.claim)+'">Approve</button><button type="button" class="secondary" data-atom-action="revoke" data-id="'+esc(details.id)+'" data-version="'+esc(details.version)+'" data-claim="'+esc(details.claim)+'" data-lifecycle="'+esc(details.lifecycle)+'" data-scope="'+esc(details.scope)+'" data-mode="'+esc(details.mode)+'" data-evidence="'+esc(details.evidence)+'">Reject</button>'
       : '';
-    const actions='<div class="actions"><button type="button" class="secondary" data-trace="'+esc(atom.id)+'">View lineage</button>'+approval+'</div>';
+    const scopeAction=atom.lifecycle==='candidate'||atom.lifecycle==='active'||atom.lifecycle==='stable'||atom.lifecycle==='locked_core'
+      ? '<button type="button" class="secondary" data-atom-action="rescope" data-id="'+esc(details.id)+'" data-version="'+esc(details.version)+'" data-claim="'+esc(details.claim)+'" data-lifecycle="'+esc(details.lifecycle)+'" data-scope="'+esc(details.scope)+'" data-mode="'+esc(details.mode)+'" data-evidence="'+esc(details.evidence)+'">Rescope</button>'
+      : '';
+    const revoke=atom.lifecycle==='active'||atom.lifecycle==='stable'||atom.lifecycle==='locked_core'
+      ? '<button type="button" class="secondary" data-atom-action="revoke" data-id="'+esc(details.id)+'" data-version="'+esc(details.version)+'" data-claim="'+esc(details.claim)+'" data-lifecycle="'+esc(details.lifecycle)+'" data-scope="'+esc(details.scope)+'" data-mode="'+esc(details.mode)+'" data-evidence="'+esc(details.evidence)+'">Revoke</button>'
+      : '';
+    const actions='<div class="actions"><button type="button" class="secondary" data-trace="'+esc(atom.id)+'">View lineage</button>'+decision+scopeAction+revoke+'</div>';
     return '<tr><td class="claim">'+esc(atom.claim)+'</td><td>'+esc(atom.facet)+'</td><td>'+esc(scopeLabel(atom.scope))+(atom.mode?'<div class="muted">Mode: '+esc(atom.mode)+'</div>':'')+'</td><td><span class="pill '+(atom.lifecycle==='active'?'good':atom.lifecycle==='candidate'?'warning':'')+'">'+esc(atom.lifecycle)+'</span></td><td>'+confidenceLabel(atom.confidence)+'</td><td>'+actions+'</td></tr>';
   }).join('');
 }
@@ -294,6 +350,8 @@ function render(){
   renderStates(atoms,proposals);
   renderAtoms(atoms);
   renderRuns(runs,runTotal);
+  renderEvidence(model.evidence);
+  renderProposals(proposals);
 }
 
 function renderLearningTrace(trace){
@@ -308,12 +366,14 @@ function renderLearningTrace(trace){
 }
 
 function clearSnapshot(message){
-  model={atoms:[],runs:[],runTotal:0,runSummary:{},proposals:[],evaluations:[]};
+  model={snapshot:null,atoms:[],runs:[],runTotal:0,runSummary:{},proposals:[],evaluations:[],evidence:[]};
   q('#metrics').innerHTML=['Runs recorded','Profile atoms','Candidate approvals','Pending updates','Evaluations'].map((name)=>'<div class="card"><dt>'+name+'</dt><dd>—</dd><small>'+esc(message)+'</small></div>').join('');
   q('#evaluation-meta').textContent='Not loaded';
   q('#state-meta').textContent='Not loaded';
   q('#atom-meta').textContent='Not loaded';
   q('#run-meta').textContent='Not loaded';
+  q('#evidence-meta').textContent='Not loaded';
+  q('#proposal-meta').textContent='Not loaded';
   q('#evaluations').className='empty';
   q('#states').className='empty';
   q('#evaluations').textContent=message;
@@ -322,6 +382,8 @@ function clearSnapshot(message){
   q('#trace').className='lineage empty';
   q('#trace').textContent=message;
   q('#runs').innerHTML='<div class="empty">'+esc(message)+'</div>';
+  q('#evidence').innerHTML='<div class="empty">'+esc(message)+'</div>';
+  q('#proposals').innerHTML='<div class="empty">'+esc(message)+'</div>';
 }
 
 function setBusy(busy){
@@ -340,8 +402,10 @@ function setStatus(message,type='status'){
 
 function friendlyError(error){
   const message=String(error?.message||error);
-  if(/AUTH|JWT|TOKEN|SCOPE/i.test(message))return 'Connection rejected. Check that the token is valid, unexpired, and has profile:read access. ('+message+')';
-  return 'Could not load the local snapshot. '+message;
+  const request=error?.requestId?' Request '+error.requestId+'.':'';
+  if(error?.status===401||/AUTH|JWT|TOKEN|SCOPE/i.test(message))return 'Connection rejected. Check that the token is valid, unexpired, and has profile:read access.'+request;
+  if(error?.status===409)return 'The hosted state changed while this action was pending. Refresh and review the current version.'+request;
+  return 'Could not load the hosted snapshot. '+message+request;
 }
 
 async function load(successMessage){
@@ -356,14 +420,19 @@ async function load(successMessage){
   setBusy(true);
   setStatus('Loading the current subject snapshot…');
   try{
-    const [atoms,runs,proposals,evaluations]=await Promise.all(endpoints.map((path)=>api(path)));
+    const payload=await api('studio/snapshot?limit='+SNAPSHOT_LIMIT);
+    const snapshot=payload.snapshot||{};
+    const atomGroups=snapshot.atoms||{};
+    const atoms=[...(atomGroups.candidate?.items||[]),...(atomGroups.active?.items||[]),...(atomGroups.other?.items||[])];
     model={
-      atoms:Array.isArray(atoms.items)?atoms.items:[],
-      runs:Array.isArray(runs.items)?runs.items:[],
-      runTotal:Number.isSafeInteger(runs.total)?runs.total:(Array.isArray(runs.items)?runs.items.length:0),
-      runSummary:runs.summary&&typeof runs.summary==='object'?runs.summary:{},
-      proposals:Array.isArray(proposals.items)?proposals.items:[],
-      evaluations:Array.isArray(evaluations.items)?evaluations.items:[]
+      snapshot,
+      atoms,
+      runs:Array.isArray(snapshot.runs?.items)?snapshot.runs.items:[],
+      runTotal:Number.isSafeInteger(snapshot.runs?.total)?snapshot.runs.total:0,
+      runSummary:{},
+      proposals:Array.isArray(snapshot.updateProposals?.items)?snapshot.updateProposals.items:[],
+      evaluations:Array.isArray(snapshot.evaluations?.items)?snapshot.evaluations.items:[],
+      evidence:Array.isArray(snapshot.evidence?.items)?snapshot.evidence.items:[]
     };
     connected=true;
     render();
@@ -371,6 +440,10 @@ async function load(successMessage){
     return true;
   }catch(error){
     connected=false;
+    if(error?.status===401){
+      q('#token').value='';
+      clearSnapshot('Session cleared after authentication failure.');
+    }
     clearSnapshot('No data is shown because the connection failed.');
     setStatus(friendlyError(error),'status error');
     q('#token').focus();
@@ -380,8 +453,90 @@ async function load(successMessage){
   }
 }
 
+const actionKey=()=>{
+  if(window.crypto&&typeof window.crypto.randomUUID==='function')return 'studio:'+window.crypto.randomUUID();
+  return 'studio:'+Date.now()+':'+Math.random().toString(36).slice(2);
+};
+const reasonFor=(label,details)=>{
+  if(!window.confirm(label+'\n\n'+details))return null;
+  const reason=window.prompt('Reason for '+label.toLowerCase()+':');
+  return reason&&reason.trim()?reason.trim():null;
+};
+const scopeFromPrompt=(value)=>{
+  const [level,...rest]=String(value||'').trim().split(':');
+  if(!['user','project','task'].includes(level))return null;
+  const ref=rest.join(':').trim();
+  if(level!=='user'&&!ref)return null;
+  return ref?{level,ref}:{level};
+};
+const atomDetails=(button)=>'Claim: '+(button.dataset.claim||'Unknown')+'\nScope: '+(button.dataset.scope||'Unknown')+'\nCurrent version: '+(button.dataset.version||'Unknown')+'\nEvidence: '+(button.dataset.evidence||'See lineage');
+
+async function mutateAtom(button,operation){
+  const label=operation==='confirm'?'Approve candidate':operation==='rescope'?'Rescope atom':operation==='revoke'?(button.dataset.lifecycle==='candidate'?'Reject candidate':'Revoke active atom'):'Update atom';
+  const reason=reasonFor(label,atomDetails(button));
+  if(!reason)return;
+  let scope;
+  let mode;
+  if(operation==='rescope'){
+    scope=scopeFromPrompt(window.prompt('New scope (for example project:merakicore or user:pratham):',button.dataset.scope||''));
+    if(!scope){setStatus('A valid scope is required (user, project:name, or task:name).','status error');return;}
+    mode=window.prompt('Mode (optional):',button.dataset.mode||'')||undefined;
+  }
+  button.disabled=true;
+  setStatus(label+'â€¦');
+  try{
+    await api('profile/atoms/'+encodeURIComponent(button.dataset.id)+'/commands',{
+      method:'POST',
+      headers:{'Idempotency-Key':actionKey()},
+      body:JSON.stringify({
+        atom_id:button.dataset.id,
+        expected_version:Number(button.dataset.version),
+        operation,
+        reason,
+        ...(scope?{scope}:{}),
+        ...(mode?{mode}: {})
+      })
+    });
+    await load(label+' complete');
+  }catch(error){
+    if(error?.status===409){
+      await load();
+      setStatus('This atom changed in another session. The current version is shown; review it before trying again.','status error');
+    }else setStatus(label+' failed. '+friendlyError(error),'status error');
+    button.disabled=false;
+    button.focus();
+  }
+}
+
+async function mutateProposal(button,operation){
+  const reason=reasonFor(operation==='approve'?'Approve proposal':operation==='reject'?'Reject proposal':'Rollback proposal','Proposal '+button.dataset.id+'\nThis changes governed future behaviour.');
+  if(!reason)return;
+  button.disabled=true;
+  try{
+    await api('update-proposals/'+encodeURIComponent(button.dataset.id)+'/commands',{
+      method:'POST',
+      headers:{'Idempotency-Key':actionKey()},
+      body:JSON.stringify({operation,reason})
+    });
+    await load('Proposal '+operation+'d');
+  }catch(error){
+    if(error?.status===409){await load();setStatus('This proposal changed in another session. The current state is shown.','status error');}
+    else setStatus('Proposal action failed. '+friendlyError(error),'status error');
+    button.disabled=false;
+    button.focus();
+  }
+}
+
 q('#connect').addEventListener('click',()=>load());
 q('#refresh').addEventListener('click',()=>load());
+q('#forget').addEventListener('click',()=>{
+  q('#token').value='';
+  connected=false;
+  clearSnapshot('Token forgotten. Connect again to inspect hosted data.');
+  setStatus('Token forgotten.','status success');
+  q('#token').focus();
+  setBusy(false);
+});
 q('#token').addEventListener('keydown',(event)=>{
   if(event.key==='Enter')load();
 });
@@ -425,6 +580,25 @@ q('#atoms').addEventListener('click',async(event)=>{
     button.focus();
   }
 });
+q('#atoms').addEventListener('click',async(event)=>{
+  const button=event.target.closest('[data-atom-action]');
+  if(button)await mutateAtom(button,button.dataset.atomAction);
+});
+q('#proposals').addEventListener('click',async(event)=>{
+  const button=event.target.closest('[data-proposal-action]');
+  if(button)await mutateProposal(button,button.dataset.proposalAction);
+});
 </script>
 </body>
 </html>`;
+
+const cspNoncePattern = /^[A-Za-z0-9_-]+$/u;
+
+/** Render the dependency-free Studio shell for any HTTP transport. */
+export const renderStudio = (options: StudioRenderOptions = {}): string => {
+  if (options.nonce === undefined) return studioHtml;
+  if (!cspNoncePattern.test(options.nonce) || options.nonce.length > 256) {
+    throw new Error("STUDIO_CSP_NONCE_INVALID");
+  }
+  return studioHtml.replace(/<(style|script)(?=[\s>])/gu, `<$1 nonce="${options.nonce}"`);
+};
