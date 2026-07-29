@@ -7,6 +7,8 @@ digests must never be copied here.
 
 ## Scope
 
+Implementation commit: `974afe4` (local branch `codex/gate4-hosted-resume`).
+
 Included: production Next.js REST routes, the public data-free Studio shell,
 authenticated Studio reads and governance mutations, transaction-mode Supabase
 persistence, route parity, and two-process restart proof.
