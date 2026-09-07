@@ -1,10 +1,11 @@
 openapi: 3.1.0
 info:
-  title: Meraki Core Local API
-  version: 0.2.0
+  title: Meraki Core API
+  version: 0.3.0
   description: >-
-    The authenticated local surface for immutable evidence, governed profile
-    candidates, scoped runs, evaluations, trace inspection, and rollback.
+    The authenticated local and hosted surface for immutable evidence,
+    governed profile candidates, scoped runs, evaluations, trace inspection,
+    and rollback.
 security:
   - bearerAuth: []
 paths:
@@ -15,6 +16,17 @@ paths:
       responses:
         "200":
           description: Local Meraki Studio HTML shell; API data remains bearer authenticated
+          content:
+            text/html:
+              schema:
+                type: string
+  /studio:
+    get:
+      security: []
+      operationId: getStudio
+      responses:
+        "200":
+          description: Canonical Meraki Studio HTML shell; API data remains bearer authenticated
           content:
             text/html:
               schema:
@@ -72,9 +84,21 @@ paths:
   /v1/profile/atoms:
     get:
       operationId: listProfileAtoms
+      parameters:
+        - $ref: "#/components/parameters/ListLimit"
       responses:
         "200":
           description: Authenticated subject profile atoms
+  /v1/studio/snapshot:
+    get:
+      operationId: getStudioSnapshot
+      parameters:
+        - $ref: "#/components/parameters/ListLimit"
+      responses:
+        "200":
+          description: One-revision authenticated Studio read model with bounded evidence and lineage summaries
+        "403":
+          description: Caller lacks profile read authority
   /v1/profile/atoms/{id}/trace:
     get:
       operationId: getAtomTrace
@@ -117,6 +141,8 @@ paths:
   /v1/update-proposals:
     get:
       operationId: listUpdateProposals
+      parameters:
+        - $ref: "#/components/parameters/ListLimit"
       responses:
         "200":
           description: Authenticated subject update proposals
@@ -150,14 +176,7 @@ paths:
     get:
       operationId: listRuns
       parameters:
-        - in: query
-          name: limit
-          required: false
-          description: Return only the newest records while preserving subject-wide totals.
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 1000
+        - $ref: "#/components/parameters/ListLimit"
       responses:
         "200":
           description: Authenticated subject run records, total count, and guidance-application summary
@@ -179,6 +198,8 @@ paths:
   /v1/evaluations:
     get:
       operationId: listEvaluations
+      parameters:
+        - $ref: "#/components/parameters/ListLimit"
       responses:
         "200":
           description: Authenticated subject evaluations
@@ -207,8 +228,21 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
-      bearerFormat: JWT
+      description: >-
+        Hosted deployments use revocable opaque access tokens. Local
+        development may use the signed-token authenticator documented by the
+        local adapter.
   parameters:
+    ListLimit:
+      in: query
+      name: limit
+      required: false
+      description: Return at most this many newest subject-owned records.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 1000
+        default: 100
     AtomId:
       in: path
       name: id

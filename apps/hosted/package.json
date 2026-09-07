@@ -1,0 +1,26 @@
+{
+  "name": "@meraki/hosted",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "next build",
+    "dev": "next dev",
+    "start": "next start",
+    "typecheck": "tsc --noEmit --pretty false"
+  },
+  "dependencies": {
+    "@meraki/application": "workspace:*",
+    "@meraki/auth": "workspace:*",
+    "@meraki/contracts": "workspace:*",
+    "@meraki/storage-postgres": "workspace:*",
+    "@meraki/studio": "workspace:*",
+    "next": "16.2.12",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3"
+  }
+}

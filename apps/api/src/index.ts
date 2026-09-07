@@ -1,6 +1,7 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
+import { randomBytes } from "node:crypto";
 import { pathToFileURL } from "node:url";
-import type { ProfileAtom, TaskContext } from "@meraki/contracts";
+import { CONTRACT_VERSION, type ProfileAtom, type TaskContext } from "@meraki/contracts";
 import type { ExplicitActivityType } from "@meraki/core";
 import {
   createInMemoryApplication,
@@ -18,9 +19,9 @@ import {
   type AuthenticatedContext,
   type RequestAuthenticator
 } from "@meraki/auth";
-import { ConnectedAgentRuntime, evaluateConnectedCausalComparison, scopeFromUnknown } from "@meraki/core";
+import { ConnectedAgentRuntime, scopeFromUnknown } from "@meraki/core";
 import { JsonConnectedRuntimeStore } from "@meraki/storage-local";
-import { dashboardHtml } from "./dashboard.js";
+import { renderStudio } from "@meraki/studio";
 export { ConnectedAgentRuntime } from "@meraki/core";
 export { JsonConnectedRuntimeStore } from "@meraki/storage-local";
 
@@ -74,7 +75,7 @@ type AtomCommandBody = {
   mode?: string;
 };
 type UpdateProposalBody = { lesson_id: string; evidence_event_id: string; operation: "reinforce" | "weaken" };
-type UpdateProposalCommandBody = { operation: "approve" | "reject" | "rollback" };
+type UpdateProposalCommandBody = { operation: "approve" | "reject" | "rollback"; reason?: string };
 type EvaluationBody = {
   run_id: string;
   experiment_id: string;
@@ -135,8 +136,8 @@ const required = (value: unknown, code: string): string =>
     : (() => {
         throw new Error(code);
       })();
-const boundedListLimit = (value: unknown): number | undefined => {
-  if (value === undefined) return undefined;
+const boundedListLimit = (value: unknown): number => {
+  if (value === undefined) return 100;
   if (typeof value !== "string" || !/^\d+$/u.test(value)) throw new Error("LIST_LIMIT_INVALID");
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 1000) throw new Error("LIST_LIMIT_INVALID");
@@ -229,24 +230,59 @@ export const buildServer = (
   server.get("/health", () => ({
     status: "ok",
     service: "meraki-core",
-    contract_version: "0.1.0"
+    contract_version: CONTRACT_VERSION
   }));
-  server.get("/dashboard", (_request, reply) =>
+  server.get("/dashboard", (_request, reply) => {
+    const nonce = randomBytes(18).toString("base64url");
     reply
       .header(
         "content-security-policy",
-        "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+        [
+          "default-src 'none'",
+          `script-src 'nonce-${nonce}'`,
+          `style-src-elem 'nonce-${nonce}'`,
+          "connect-src 'self'",
+          "img-src 'self' data:",
+          "base-uri 'none'",
+          "form-action 'none'",
+          "frame-ancestors 'none'",
+          "object-src 'none'"
+        ].join("; ")
       )
       .header("cache-control", "no-store")
       .header("referrer-policy", "no-referrer")
       .header("x-content-type-options", "nosniff")
       .header("cross-origin-opener-policy", "same-origin")
       .type("text/html; charset=utf-8")
-      .send(dashboardHtml)
-  );
+      .send(renderStudio({ nonce }));
+  });
+  server.get("/studio", (_request, reply) => {
+    const nonce = randomBytes(18).toString("base64url");
+    return reply
+      .header(
+        "content-security-policy",
+        [
+          "default-src 'none'",
+          `script-src 'nonce-${nonce}'`,
+          `style-src-elem 'nonce-${nonce}'`,
+          "connect-src 'self'",
+          "img-src 'self' data:",
+          "base-uri 'none'",
+          "form-action 'none'",
+          "frame-ancestors 'none'",
+          "object-src 'none'"
+        ].join("; ")
+      )
+      .header("cache-control", "no-store")
+      .header("referrer-policy", "no-referrer")
+      .header("x-content-type-options", "nosniff")
+      .header("cross-origin-opener-policy", "same-origin")
+      .type("text/html; charset=utf-8")
+      .send(renderStudio({ nonce }));
+  });
   server.addHook("onRequest", async (request, reply) => {
     const pathname = request.url.split("?", 1)[0];
-    if (pathname === "/health" || pathname === "/dashboard") return;
+    if (pathname === "/health" || pathname === "/dashboard" || pathname === "/studio") return;
     try {
       requestContexts.set(request, await authenticator.authenticate(request.headers.authorization));
     } catch (error) {
@@ -360,11 +396,31 @@ export const buildServer = (
       return sendError(reply, error, "INVALID_RUN");
     }
   });
-  server.get("/v1/profile/atoms", async (request) => {
-    const context = contextFor(request, ["profile:read"]);
-    return {
-      items: await application.query(context, { name: "list_atoms" })
-    };
+  server.get<{ Querystring: { limit?: string } }>("/v1/profile/atoms", async (request, reply) => {
+    try {
+      const context = contextFor(request, ["profile:read"]);
+      return reply.send({
+        items: await application.query(context, {
+          name: "list_atoms",
+          input: { limit: boundedListLimit(request.query.limit) }
+        })
+      });
+    } catch (error) {
+      return sendError(reply, error, "INVALID_ATOM_LIST");
+    }
+  });
+  server.get<{ Querystring: { limit?: string } }>("/v1/studio/snapshot", async (request, reply) => {
+    try {
+      const context = contextFor(request, ["profile:read"]);
+      return reply.send({
+        snapshot: await application.query(context, {
+          name: "studio_snapshot",
+          input: { limit: boundedListLimit(request.query.limit) }
+        })
+      });
+    } catch (error) {
+      return sendError(reply, error, "INVALID_STUDIO_SNAPSHOT");
+    }
   });
   server.get<{ Params: { eventId: string } }>("/v1/learning/trace/:eventId", async (request, reply) => {
     try {
@@ -388,11 +444,18 @@ export const buildServer = (
       return sendError(reply, error, "ATOM_TRACE_NOT_FOUND");
     }
   });
-  server.get("/v1/update-proposals", async (request) => {
-    const context = contextFor(request, ["profile:read"]);
-    return {
-      items: await application.query(context, { name: "list_update_proposals" })
-    };
+  server.get<{ Querystring: { limit?: string } }>("/v1/update-proposals", async (request, reply) => {
+    try {
+      const context = contextFor(request, ["profile:read"]);
+      return reply.send({
+        items: await application.query(context, {
+          name: "list_update_proposals",
+          input: { limit: boundedListLimit(request.query.limit) }
+        })
+      });
+    } catch (error) {
+      return sendError(reply, error, "INVALID_UPDATE_PROPOSAL_LIST");
+    }
   });
   server.post<{ Body: UpdateProposalBody }>("/v1/update-proposals", async (request, reply) => {
     try {
@@ -422,7 +485,8 @@ export const buildServer = (
           name: "command_update_proposal",
           input: {
             proposalId: request.params.id,
-            operation: request.body.operation
+            operation: request.body.operation,
+            ...(request.body.reason === undefined ? {} : { reason: request.body.reason })
           }
         });
         return reply.send(receipt.value);
@@ -435,27 +499,34 @@ export const buildServer = (
     try {
       const context = contextFor(request, ["profile:read"]);
       const limit = boundedListLimit(request.query.limit);
-      const visible = await application.query(context, {
-        name: "list_runs",
-        input: {}
+      const page = await application.query(context, {
+        name: "list_run_page",
+        input: { limit }
       });
       return reply.send({
-        items: limit === undefined ? visible : visible.slice(0, limit),
-        total: visible.length,
+        items: page.items,
+        total: page.total,
         summary: {
-          guidance_applied: visible.filter((record) => record.run.trace.changed).length,
-          baseline_preserved: visible.filter((record) => !record.run.trace.changed).length
+          guidance_applied: page.summary.guidanceApplied,
+          baseline_preserved: page.summary.baselinePreserved
         }
       });
     } catch (error) {
       return sendError(reply, error, "INVALID_RUN_LIST");
     }
   });
-  server.get("/v1/evaluations", async (request) => {
-    const context = contextFor(request, ["profile:read"]);
-    return {
-      items: await application.query(context, { name: "list_evaluations" })
-    };
+  server.get<{ Querystring: { limit?: string } }>("/v1/evaluations", async (request, reply) => {
+    try {
+      const context = contextFor(request, ["profile:read"]);
+      return reply.send({
+        items: await application.query(context, {
+          name: "list_evaluations",
+          input: { limit: boundedListLimit(request.query.limit) }
+        })
+      });
+    } catch (error) {
+      return sendError(reply, error, "INVALID_EVALUATION_LIST");
+    }
   });
   server.post<{ Body: CausalEvaluationBody }>("/v1/evaluations/causal", async (request, reply) => {
     try {
@@ -470,31 +541,34 @@ export const buildServer = (
         tenantId: input.unrelated.context.tenant_id,
         subjectId: input.unrelated.context.subject_id
       });
-      const report = evaluateConnectedCausalComparison({
-        ...(input.experiment_id ? { experimentId: input.experiment_id } : {}),
-        correction: {
-          ...input.correction,
-          tenantId: context.tenantId,
-          subjectId: context.subjectId,
-          actorId: context.actorId,
-          scope: scopeFromUnknown(input.correction.scope)
-        },
-        related: {
-          ...input.related,
-          context: {
-            ...input.related.context,
-            tenant_id: context.tenantId,
-            subject_id: context.subjectId,
-            scope: scopeFromUnknown(input.related.context.scope)
-          }
-        },
-        unrelated: {
-          ...input.unrelated,
-          context: {
-            ...input.unrelated.context,
-            tenant_id: context.tenantId,
-            subject_id: context.subjectId,
-            scope: scopeFromUnknown(input.unrelated.context.scope)
+      const report = await application.query(context, {
+        name: "run_controlled_comparison",
+        input: {
+          ...(input.experiment_id ? { experimentId: input.experiment_id } : {}),
+          correction: {
+            ...input.correction,
+            tenantId: context.tenantId,
+            subjectId: context.subjectId,
+            actorId: context.actorId,
+            scope: scopeFromUnknown(input.correction.scope)
+          },
+          related: {
+            ...input.related,
+            context: {
+              ...input.related.context,
+              tenant_id: context.tenantId,
+              subject_id: context.subjectId,
+              scope: scopeFromUnknown(input.related.context.scope)
+            }
+          },
+          unrelated: {
+            ...input.unrelated,
+            context: {
+              ...input.unrelated.context,
+              tenant_id: context.tenantId,
+              subject_id: context.subjectId,
+              scope: scopeFromUnknown(input.unrelated.context.scope)
+            }
           }
         }
       });

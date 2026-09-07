@@ -19,6 +19,7 @@
     "@meraki/contracts": "workspace:*",
     "@meraki/core": "workspace:*",
     "@meraki/storage-local": "workspace:*",
+    "@meraki/studio": "workspace:*",
     "fastify": "^5.8.5"
   }
 }

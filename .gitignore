@@ -3,6 +3,8 @@ dist/
 coverage/
 .turbo/
 .vite/
+.next/
+.vercel/
 *.tsbuildinfo
 .env
 .env.*

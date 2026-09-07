@@ -98,7 +98,7 @@ describe("connected agent adapter", () => {
     expect(dashboard.headers["referrer-policy"]).toBe("no-referrer");
     expect(dashboard.body).toContain("Meraki <span>Studio</span>");
     expect(dashboard.body).toContain("Profile atoms");
-    expect(dashboard.body).toContain("data-approve=");
+    expect(dashboard.body).toContain("data-atom-action=");
     expect(dashboard.body).toContain("profile/atoms/");
     expect(dashboard.body).toContain('<label for="token">Bearer token</label>');
     expect(dashboard.body).toContain('aria-live="polite"');
@@ -119,6 +119,33 @@ describe("connected agent adapter", () => {
     expect(cacheBusted.statusCode).toBe(200);
     expect(cacheBusted.headers["content-type"]).toContain("text/html");
   });
+
+  it("serves the canonical Studio route with a response-bound CSP nonce and ephemeral credentials", async () => {
+    const studio = await server.inject({ method: "GET", url: "/studio" });
+    const csp = studio.headers["content-security-policy"] ?? "";
+    const nonce = /script-src 'nonce-([^']+)'/u.exec(csp)?.[1];
+    const inlineBlocks = [...studio.body.matchAll(/<(style|script)(?=[\s>])[^>]*>/gu)].map((match) => match[0]);
+
+    expect(studio.statusCode).toBe(200);
+    expect(studio.headers["content-type"]).toContain("text/html");
+    expect(studio.headers["cache-control"]).toBe("no-store");
+    expect(csp).not.toContain("script-src 'unsafe-inline'");
+    expect(nonce).toMatch(/^[A-Za-z0-9_-]+$/u);
+    expect(inlineBlocks).toHaveLength(2);
+    expect(inlineBlocks.every((block) => block.includes(`nonce="${nonce}"`))).toBe(true);
+    expect(studio.body).not.toContain("localStorage");
+    expect(studio.body).not.toContain("sessionStorage");
+    expect(studio.body).not.toContain("document.cookie");
+  });
+
+  it.each(["profile/atoms", "studio/snapshot", "update-proposals", "runs", "evaluations"])(
+    "enforces the shared list bound on /v1/%s",
+    async (path) => {
+      expect((await server.inject({ method: "GET", url: `/v1/${path}?limit=1000` })).statusCode).toBe(200);
+      expect((await server.inject({ method: "GET", url: `/v1/${path}?limit=0` })).statusCode).toBe(422);
+      expect((await server.inject({ method: "GET", url: `/v1/${path}?limit=1001` })).statusCode).toBe(422);
+    }
+  );
 
   it("changes a relevant run and returns a trace, while unrelated mode stays baseline", () => {
     const runtime = new ConnectedAgentRuntime();

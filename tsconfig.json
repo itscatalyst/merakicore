@@ -11,6 +11,7 @@
     { "path": "./packages/mcp-tools" },
     { "path": "./packages/storage-local" },
     { "path": "./packages/storage-postgres" },
+    { "path": "./packages/studio" },
     { "path": "./examples/quickstart" }
   ]
 }

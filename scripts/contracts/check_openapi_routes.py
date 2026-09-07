@@ -7,6 +7,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 ROUTER = ROOT / "apps" / "api" / "src" / "index.ts"
+HOSTED_ROUTER = ROOT / "apps" / "hosted" / "src" / "rest.ts"
 OPENAPI = ROOT / "api" / "openapi.yaml"
 HTTP_METHODS = {"get", "post", "put", "patch", "delete"}
 
@@ -23,6 +24,19 @@ def router_operations(source: str) -> set[tuple[str, str]]:
         if path_match is None:
             raise RuntimeError(f"Could not resolve route after {method_match.group(0)}")
         operations.add((method_match.group(1), normalize_fastify_path(path_match.group(1))))
+    return operations
+
+
+def hosted_router_operations(source: str) -> set[tuple[str, str]]:
+    operations = {
+        (method.lower(), path)
+        for method, path in re.findall(
+            r'\{\s*method:\s*"(GET|POST|PUT|PATCH|DELETE)",\s*path:\s*"(/[^"]+)"\s*\}',
+            source,
+        )
+    }
+    if not operations:
+        raise RuntimeError("Could not resolve hosted REST operation manifest")
     return operations
 
 
@@ -45,17 +59,24 @@ def main() -> None:
     if not isinstance(document, dict):
         raise RuntimeError("OpenAPI document must be an object")
     router = router_operations(source)
+    hosted_router = hosted_router_operations(HOSTED_ROUTER.read_text(encoding="utf-8"))
     specification = openapi_operations(document)
-    missing = sorted(router - specification)
-    fictional = sorted(specification - router)
-    if missing or fictional:
-        lines = ["OpenAPI and Fastify routes differ."]
-        if missing:
-            lines.append(f"Missing from OpenAPI: {missing}")
-        if fictional:
-            lines.append(f"Documented but not implemented: {fictional}")
+    local_missing = sorted(router - specification)
+    local_fictional = sorted(specification - router)
+    hosted_missing = sorted(hosted_router - specification)
+    hosted_fictional = sorted(specification - hosted_router)
+    if local_missing or local_fictional or hosted_missing or hosted_fictional:
+        lines = ["OpenAPI, Fastify, and hosted REST routes differ."]
+        if local_missing:
+            lines.append(f"Fastify missing from OpenAPI: {local_missing}")
+        if local_fictional:
+            lines.append(f"OpenAPI missing from Fastify: {local_fictional}")
+        if hosted_missing:
+            lines.append(f"Hosted missing from OpenAPI: {hosted_missing}")
+        if hosted_fictional:
+            lines.append(f"OpenAPI missing from hosted: {hosted_fictional}")
         raise SystemExit("\n".join(lines))
-    print(f"OpenAPI route parity: {len(router)} operations")
+    print(f"OpenAPI route parity: {len(router)} operations across Fastify and hosted adapters")
 
 
 if __name__ == "__main__":

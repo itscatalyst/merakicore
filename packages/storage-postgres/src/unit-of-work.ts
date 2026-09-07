@@ -3,6 +3,7 @@ import {
   IdempotencyConflictError,
   type MutationReceipt,
   type RuntimeIdentity,
+  type RuntimeReadMetadata,
   type RuntimeTransactionMetadata,
   type RuntimeUnitOfWork
 } from "@meraki/application";
@@ -314,11 +315,24 @@ export class PostgresRevisionConflictError extends ApplicationError {
 export class PostgresRuntimeUnitOfWork implements RuntimeUnitOfWork {
   public constructor(private readonly sql: TransactionalSqlClient) {}
 
-  public async read<T>(identity: RuntimeIdentity, operation: (runtime: ConnectedAgentRuntime) => T): Promise<T> {
+  public async read<T>(
+    identity: RuntimeIdentity,
+    operation: (runtime: ConnectedAgentRuntime, metadata?: RuntimeReadMetadata) => T
+  ): Promise<T> {
     const rows = await this.sql.query<SnapshotRow>(READ_SNAPSHOT_SQL, [identity.tenantId, identity.subjectId]);
     if (rows.length > 1) throw new ApplicationError("POSTGRES_SNAPSHOT_DUPLICATE");
-    const runtime = rows[0] === undefined ? new ConnectedAgentRuntime() : restoreSnapshot(rows[0], identity).runtime;
-    return operation(cloneRuntime(runtime));
+    if (rows[0] === undefined) {
+      const runtime = new ConnectedAgentRuntime();
+      return operation(cloneRuntime(runtime), {
+        revision: 0,
+        snapshotHash: sha256Digest(canonicalJson(runtime.snapshot()))
+      });
+    }
+    const restored = restoreSnapshot(rows[0], identity);
+    return operation(cloneRuntime(restored.runtime), {
+      revision: restored.revision,
+      snapshotHash: restored.hash
+    });
   }
 
   public transact<T>(

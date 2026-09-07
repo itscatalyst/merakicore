@@ -33,5 +33,9 @@ jobs:
         run: python -m pip install --disable-pip-version-check jsonschema==4.23.0 PyYAML==6.0.2
       - name: Install
         run: pnpm install --frozen-lockfile
+      - name: Production dependency audit
+        run: pnpm audit --prod
+      - name: Secret scan
+        run: pnpm security:secrets
       - name: Verify
         run: pnpm verify

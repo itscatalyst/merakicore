@@ -24,6 +24,7 @@
     "test": "vitest run --passWithNoTests",
     "contracts:generate": "python scripts/contracts/generate.py",
     "contracts:check": "python scripts/contracts/check.py && python scripts/contracts/check_openapi_routes.py",
+    "security:secrets": "node scripts/check-secrets.mjs",
     "verify": "corepack pnpm build && corepack pnpm typecheck && corepack pnpm format:check && corepack pnpm lint && corepack pnpm test && corepack pnpm contracts:check && corepack pnpm example:quickstart"
   },
   "devDependencies": {
@@ -41,7 +42,9 @@
       "brace-expansion@^5.0.0": "5.0.8",
       "fast-uri@^3.0.0": "3.1.4",
       "fast-uri@^4.0.0": "4.1.1",
-      "find-my-way@^9.0.0": "9.7.0"
+      "find-my-way@^9.0.0": "9.7.0",
+      "postcss@8.4.31": "8.5.24",
+      "sharp@^0.34.5": "0.35.3"
     }
   }
 }
